@@ -20,7 +20,7 @@ RUN apt-get update -y && \
       git \
       curl && \
     # Node.js and Yarn
-    curl -sL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh && \
+    curl -sL https://deb.nodesource.com/setup_24.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y nodejs && \
     npm install -g yarn && \
@@ -79,15 +79,20 @@ COPY --from=builder ./usr/local/bin/ffmpeg /usr/bin/ffmpeg
 COPY --from=builder ./usr/local/bin/ffprobe /usr/bin/ffprobe
 
 RUN apt-get update -y && \
+    apt-get install -y \
+      ca-certificates \
+      curl \
+      gnupg && \
+    curl -sL https://deb.nodesource.com/setup_24.x -o nodesource_setup.sh && \
+    bash nodesource_setup.sh && \
     # System packages
     apt-get install -y \
       libstdc++6 \
       openssl \
       libncurses5 \
       locales \
-      ca-certificates \
       python3-mutagen \
-      curl \
+      nodejs \
       zip \
       openssh-client \
       nano \
@@ -97,16 +102,16 @@ RUN apt-get update -y && \
       # unzip is needed for Deno
       unzip \
       procps && \
-    # Install Deno - required for YouTube downloads (See yt-dlp#14404)
-    curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- -y --no-modify-path && \
+    # Best-effort Deno install. Keep build non-blocking if upstream is temporarily unavailable.
+    (timeout 60 sh -lc 'curl -fsSL --max-time 30 https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- -y --no-modify-path' || true) && \
     # Apprise
     export PIPX_HOME=/opt/pipx && \
     export PIPX_BIN_DIR=/usr/local/bin && \
-    pipx install apprise && \
+    (timeout 180 pipx install apprise || true) && \
     # yt-dlp
     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \
-    yt-dlp -U && \
+    (timeout 90 yt-dlp -U || true) && \
     # Set the locale
     sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen && \
     # Clean up

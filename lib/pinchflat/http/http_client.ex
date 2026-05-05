@@ -10,6 +10,11 @@ defmodule Pinchflat.HTTP.HTTPClient do
 
   @behaviour HTTPBehaviour
 
+  @default_http_options [
+    timeout: 30_000,
+    connect_timeout: 10_000
+  ]
+
   @doc """
   Makes a GET request to the given URL and returns the response.
 
@@ -22,8 +27,9 @@ defmodule Pinchflat.HTTP.HTTPClient do
   @impl HTTPBehaviour
   def get(url, headers \\ [], opts \\ []) do
     headers = parse_headers(headers)
+    {http_opts, request_opts} = split_options(opts)
 
-    case :httpc.request(:get, {url, headers}, [], opts) do
+    case :httpc.request(:get, {url, headers}, http_opts, request_opts) do
       {:ok, {{_version, 200, _reason_phrase}, _headers, body}} ->
         {:ok, to_string(body)}
 
@@ -37,5 +43,12 @@ defmodule Pinchflat.HTTP.HTTPClient do
 
   defp parse_headers(headers) do
     Enum.map(headers, fn {k, v} -> {to_charlist(k), to_charlist(v)} end)
+  end
+
+  defp split_options(opts) do
+    # LOCAL PATCH: avoid indefinitely stuck Oban jobs on external HTTP calls.
+    {http_opts, request_opts} = Keyword.split(opts, [:timeout, :connect_timeout])
+
+    {Keyword.merge(@default_http_options, http_opts), request_opts}
   end
 end

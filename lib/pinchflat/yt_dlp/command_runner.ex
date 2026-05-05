@@ -154,7 +154,26 @@ defmodule Pinchflat.YtDlp.CommandRunner do
   end
 
   defp misc_options do
-    if Settings.get!(:restrict_filenames), do: [:restrict_filenames], else: []
+    opts = if Settings.get!(:restrict_filenames), do: [:restrict_filenames], else: []
+
+    opts
+    |> maybe_add_env_option(:js_runtimes, "PINCHFLAT_YT_DLP_JS_RUNTIMES")
+    |> maybe_add_env_option(:remote_components, "PINCHFLAT_YT_DLP_REMOTE_COMPONENTS")
+    |> maybe_add_env_flag(:ignore_no_formats_error, "PINCHFLAT_YT_DLP_IGNORE_NO_FORMATS_ERROR")
+  end
+
+  defp maybe_add_env_option(opts, opt_name, env_name) do
+    case env_name |> System.get_env("") |> String.trim() do
+      "" -> opts
+      value -> opts ++ [{opt_name, value}]
+    end
+  end
+
+  defp maybe_add_env_flag(opts, opt_name, env_name) do
+    case env_name |> System.get_env("0") |> String.trim() do
+      "1" -> opts ++ [opt_name]
+      _ -> opts
+    end
   end
 
   defp backend_executable do

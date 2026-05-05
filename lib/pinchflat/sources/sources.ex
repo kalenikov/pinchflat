@@ -38,11 +38,21 @@ defmodule Pinchflat.Sources do
   Returns boolean()
   """
   def use_cookies?(source, operation) when operation in [:indexing, :downloading, :metadata, :error_recovery] do
-    case source.cookie_behaviour do
-      :disabled -> false
-      :all_operations -> true
-      :when_needed -> operation in [:indexing, :error_recovery]
+    if force_cookies_enabled?() do
+      true
+    else
+      case source.cookie_behaviour do
+        :disabled -> false
+        :all_operations -> true
+        :when_needed -> operation in [:indexing, :error_recovery]
+      end
     end
+  end
+
+  defp force_cookies_enabled? do
+    System.get_env("PINCHFLAT_FORCE_COOKIES", "0")
+    |> String.trim()
+    |> Kernel.==("1")
   end
 
   @doc """
