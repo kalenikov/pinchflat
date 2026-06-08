@@ -95,13 +95,24 @@ defmodule PinchflatWeb.Sources.MediaItemTableLiveTest do
       refute html =~ "hero-trash"
     end
 
-    test "delete link includes prevent_download param", %{conn: conn, source: source} do
+    test "delete button triggers delete_item event with item id", %{conn: conn, source: source} do
       media_item = media_item_fixture(source_id: source.id)
 
       {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
 
-      assert html =~ "prevent_download=true"
-      assert html =~ "media/#{media_item.id}"
+      assert html =~ ~s(phx-click="delete_item")
+      assert html =~ ~s(phx-value-id="#{media_item.id}")
+    end
+
+    test "delete_item event removes item from table", %{conn: conn, source: source} do
+      stub(UserScriptRunnerMock, :run, fn _event_type, _data -> {:ok, "", 0} end)
+      media_item = media_item_fixture(source_id: source.id)
+
+      {:ok, view, _html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      render_hook(view, "delete_item", %{"id" => to_string(media_item.id)})
+
+      refute render(view) =~ media_item.title
     end
   end
 

@@ -2,6 +2,7 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
   use PinchflatWeb, :live_view
   use Pinchflat.Media.MediaQuery
 
+  alias Pinchflat.Media
   alias Pinchflat.Repo
   alias Pinchflat.Sources
   alias Pinchflat.Utils.NumberUtils
@@ -76,10 +77,10 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
         <:col :let={media_item} label="" class="flex justify-end">
           <.link
             :if={@media_state == "downloaded"}
-            href={~p"/sources/#{@source.id}/media/#{media_item.id}?prevent_download=true"}
-            method="delete"
+            phx-click="delete_item"
+            phx-value-id={media_item.id}
             data-confirm="Delete files and prevent re-download?"
-            class="mr-4 text-red-400 hover:text-red-300"
+            class="mr-4 text-red-400 hover:text-red-300 cursor-pointer"
           >
             <.icon name="hero-trash" class="w-5 h-5" />
           </.link>
@@ -139,6 +140,14 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
   def handle_event("search_term", params, socket) do
     search_term = Map.get(params, "q", nil)
     new_assigns = fetch_pagination_attributes(socket.assigns.base_query, 1, search_term, socket.assigns.sort_key, socket.assigns.sort_direction)
+
+    {:noreply, assign(socket, new_assigns)}
+  end
+
+  def handle_event("delete_item", %{"id" => id}, %{assigns: assigns} = socket) do
+    media_item = Media.get_media_item!(String.to_integer(id))
+    {:ok, _} = Media.delete_media_files(media_item, %{prevent_download: true})
+    new_assigns = fetch_pagination_attributes(assigns.base_query, assigns.page, assigns.search_term, assigns.sort_key, assigns.sort_direction)
 
     {:noreply, assign(socket, new_assigns)}
   end
