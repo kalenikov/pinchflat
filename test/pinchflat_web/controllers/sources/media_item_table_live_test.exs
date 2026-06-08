@@ -78,6 +78,111 @@ defmodule PinchflatWeb.Sources.MediaItemTableLiveTest do
     end
   end
 
+  describe "delete+ignore button" do
+    test "shows delete button on downloaded tab", %{conn: conn, source: source} do
+      _media_item = media_item_fixture(source_id: source.id)
+
+      {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      assert html =~ "hero-trash"
+    end
+
+    test "does not show delete button on pending tab", %{conn: conn, source: source} do
+      _media_item = media_item_fixture(source_id: source.id, media_filepath: nil)
+
+      {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "pending"))
+
+      refute html =~ "hero-trash"
+    end
+
+    test "delete link includes prevent_download param", %{conn: conn, source: source} do
+      media_item = media_item_fixture(source_id: source.id)
+
+      {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      assert html =~ "prevent_download=true"
+      assert html =~ "media/#{media_item.id}"
+    end
+  end
+
+  describe "sorting" do
+    test "default sort is uploaded_at desc", %{conn: conn, source: source} do
+      older = media_item_fixture(source_id: source.id, uploaded_at: ~U[2022-01-01 00:00:00Z])
+      newer = media_item_fixture(source_id: source.id, uploaded_at: ~U[2024-01-01 00:00:00Z])
+
+      {:ok, view, _html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      html = render(view)
+      newer_pos = :binary.match(html, newer.title) |> elem(0)
+      older_pos = :binary.match(html, older.title) |> elem(0)
+
+      assert newer_pos < older_pos
+    end
+
+    test "sort_update event toggles direction for same key", %{conn: conn, source: source} do
+      _media_item = media_item_fixture(source_id: source.id)
+
+      {:ok, view, _html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      # initial sort is uploaded_at desc → toggle same key → asc → chevron-up icon
+      render_hook(view, "sort_update", %{"sort_key" => "uploaded_at"})
+      assert render(view) =~ "hero-chevron-up"
+    end
+
+    test "sort_update to different key defaults to desc", %{conn: conn, source: source} do
+      _media_item = media_item_fixture(source_id: source.id)
+
+      {:ok, view, _html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      render_hook(view, "sort_update", %{"sort_key" => "title"})
+      html = render(view)
+      assert html =~ "sort_key=&quot;title&quot;" or html =~ ~s(sort_key="title")
+    end
+
+    test "ignores unknown sort keys", %{conn: conn, source: source} do
+      _media_item = media_item_fixture(source_id: source.id)
+
+      {:ok, view, _html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      assert render_hook(view, "sort_update", %{"sort_key" => "injected_column"})
+    end
+  end
+
+  describe "duration column" do
+    test "shows duration column header", %{conn: conn, source: source} do
+      _media_item = media_item_fixture(source_id: source.id)
+
+      {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      assert html =~ "Duration"
+    end
+
+    test "formats duration in M:SS for short videos", %{conn: conn, source: source} do
+      _media_item = media_item_fixture(source_id: source.id, duration_seconds: 125)
+
+      {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      assert html =~ "2:05"
+    end
+
+    test "formats duration in H:MM:SS for long videos", %{conn: conn, source: source} do
+      _media_item = media_item_fixture(source_id: source.id, duration_seconds: 3661)
+
+      {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      assert html =~ "1:01:01"
+    end
+
+    test "shows empty string when duration is nil", %{conn: conn, source: source} do
+      _media_item = media_item_fixture(source_id: source.id, media_filepath: nil)
+
+      {:ok, view, _html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "pending"))
+
+      html = render(view)
+      assert html =~ "Duration"
+    end
+  end
+
   defp create_session(source, media_state \\ "pending") do
     %{"source_id" => source.id, "media_state" => media_state}
   end
