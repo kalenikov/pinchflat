@@ -43,9 +43,11 @@ defmodule PinchflatWeb.MediaItems.MediaItemController do
     media_item = Media.get_media_item!(id)
     {:ok, _} = Media.delete_media_files(media_item, %{prevent_download: prevent_download})
 
+    tab = if prevent_download, do: "#tab-downloaded", else: ""
+
     conn
     |> put_flash(:info, "Files deleted successfully.")
-    |> redirect(to: ~p"/sources/#{media_item.source_id}")
+    |> redirect(to: ~p"/sources/#{media_item.source_id}" <> tab)
   end
 
   def force_download(conn, %{"media_item_id" => id}) do

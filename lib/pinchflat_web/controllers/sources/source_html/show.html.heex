@@ -23,6 +23,34 @@
         <.actions_dropdown source={@source} conn={@conn} />
       </:tab_append>
 
+      <:tab title="Downloaded" id="downloaded">
+        {live_render(
+          @conn,
+          PinchflatWeb.Sources.MediaItemTableLive,
+          session: %{"source_id" => @source.id, "media_state" => "downloaded"}
+        )}
+      </:tab>
+      <:tab title="Pending" id="pending">
+        {live_render(
+          @conn,
+          PinchflatWeb.Sources.MediaItemTableLive,
+          session: %{"source_id" => @source.id, "media_state" => "pending"}
+        )}
+      </:tab>
+      <:tab title="Ignored" id="ignored">
+        {live_render(
+          @conn,
+          PinchflatWeb.Sources.MediaItemTableLive,
+          session: %{"source_id" => @source.id, "media_state" => "ignored"}
+        )}
+      </:tab>
+      <:tab title="Other" id="other">
+        {live_render(
+          @conn,
+          PinchflatWeb.Sources.MediaItemTableLive,
+          session: %{"source_id" => @source.id, "media_state" => "other"}
+        )}
+      </:tab>
       <:tab title="Source" id="source">
         <div class="flex flex-col text-white gap-10">
           <section>
@@ -37,27 +65,6 @@
             <.list_items_from_map map={Map.from_struct(@source)} />
           </section>
         </div>
-      </:tab>
-      <:tab title="Pending" id="pending">
-        {live_render(
-          @conn,
-          PinchflatWeb.Sources.MediaItemTableLive,
-          session: %{"source_id" => @source.id, "media_state" => "pending"}
-        )}
-      </:tab>
-      <:tab title="Downloaded" id="downloaded">
-        {live_render(
-          @conn,
-          PinchflatWeb.Sources.MediaItemTableLive,
-          session: %{"source_id" => @source.id, "media_state" => "downloaded"}
-        )}
-      </:tab>
-      <:tab title="Other" id="other">
-        {live_render(
-          @conn,
-          PinchflatWeb.Sources.MediaItemTableLive,
-          session: %{"source_id" => @source.id, "media_state" => "other"}
-        )}
       </:tab>
       <:tab title="Tasks" id="tasks">
         <%= if match?([_|_], @pending_tasks) do %>
