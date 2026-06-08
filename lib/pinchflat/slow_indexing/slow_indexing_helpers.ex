@@ -139,7 +139,7 @@ defmodule Pinchflat.SlowIndexing.SlowIndexingHelpers do
         DownloadOptionBuilder.build_quality_options_for(source) ++
         build_download_archive_options(source, was_forced)
 
-    runner_opts = [file_listener_handler: handler, use_cookies: should_use_cookies, skip_sleep_interval: true]
+    runner_opts = [file_listener_handler: handler, use_cookies: should_use_cookies]
     result = MediaCollection.get_media_attributes_for_collection(source.original_url, command_opts, runner_opts)
 
     FileFollowerServer.stop(pid)

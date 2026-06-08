@@ -31,7 +31,7 @@ defmodule Pinchflat.YtDlp.MediaCollection do
     output_template = YtDlpMedia.indexing_output_template()
     output_filepath = FilesystemUtils.generate_metadata_tmpfile(:json)
     file_listener_handler = Keyword.get(addl_opts, :file_listener_handler, false)
-    runner_opts = [output_filepath: output_filepath, use_cookies: use_cookies]
+    runner_opts = [output_filepath: output_filepath, use_cookies: use_cookies, skip_sleep_interval: true]
     action = :get_media_attributes_for_collection
 
     if file_listener_handler do
