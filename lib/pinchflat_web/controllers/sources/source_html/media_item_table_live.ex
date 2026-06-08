@@ -6,7 +6,8 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
   alias Pinchflat.Sources
   alias Pinchflat.Utils.NumberUtils
 
-  @limit 10
+  @limit 100
+  @valid_sort_keys ~w(uploaded_at title duration_seconds)
 
   def render(%{total_record_count: 0} = assigns) do
     ~H"""
@@ -45,8 +46,8 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
           </div>
         </div>
       </header>
-      <.table rows={@records} table_class="text-white">
-        <:col :let={media_item} label="Title" class="max-w-xs">
+      <.table rows={@records} table_class="text-white" sort_key={@sort_key} sort_direction={@sort_direction}>
+        <:col :let={media_item} label="Title" sort_key="title" class="max-w-xs">
           <section class="flex items-center space-x-1">
             <.tooltip
               :if={media_item.last_error}
@@ -66,11 +67,23 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
         <:col :let={media_item} :if={@media_state == "other"} label="Manually Ignored?">
           <.icon name={if media_item.prevent_download, do: "hero-check", else: "hero-x-mark"} />
         </:col>
-        <:col :let={media_item} label="Upload Date">
+        <:col :let={media_item} label="Upload Date" sort_key="uploaded_at">
           {DateTime.to_date(media_item.uploaded_at)}
         </:col>
+        <:col :let={media_item} label="Duration" sort_key="duration_seconds">
+          {format_duration(media_item.duration_seconds)}
+        </:col>
         <:col :let={media_item} label="" class="flex justify-end">
-          <.icon_link href={~p"/sources/#{@source.id}/media/#{media_item.id}/edit"} icon="hero-pencil-square" class="mr-4" />
+          <.link
+            :if={@media_state == "downloaded"}
+            href={~p"/sources/#{@source.id}/media/#{media_item.id}?prevent_download=true"}
+            method="delete"
+            data-confirm="Delete files and prevent re-download?"
+            class="mr-4 text-red-400 hover:text-red-300"
+          >
+            <.icon name="hero-trash" class="w-5 h-5" />
+          </.link>
+          <.icon_link href={~p"/sources/#{@source.id}/media/#{media_item.id}/edit"} icon="hero-pencil-square" />
         </:col>
       </.table>
       <section class="flex justify-center mt-5">
@@ -87,7 +100,9 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
     media_state = session["media_state"]
     source = Sources.get_source!(session["source_id"])
     base_query = generate_base_query(source, media_state)
-    pagination_attrs = fetch_pagination_attributes(base_query, page, nil)
+    sort_key = "uploaded_at"
+    sort_direction = "desc"
+    pagination_attrs = fetch_pagination_attributes(base_query, page, nil, sort_key, sort_direction)
 
     new_assigns =
       Map.merge(
@@ -95,24 +110,35 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
         %{
           base_query: base_query,
           source: source,
-          media_state: media_state
+          media_state: media_state,
+          sort_key: sort_key,
+          sort_direction: sort_direction
         }
       )
 
     {:ok, assign(socket, new_assigns)}
   end
 
+  def handle_event("sort_update", %{"sort_key" => sort_key}, %{assigns: assigns} = socket) do
+    sort_direction =
+      if assigns.sort_key == sort_key and assigns.sort_direction == "desc", do: "asc", else: "desc"
+
+    new_assigns = fetch_pagination_attributes(assigns.base_query, 1, assigns.search_term, sort_key, sort_direction)
+
+    {:noreply, assign(socket, Map.merge(new_assigns, %{sort_key: sort_key, sort_direction: sort_direction}))}
+  end
+
   def handle_event("page_change", %{"direction" => direction}, %{assigns: assigns} = socket) do
     direction = if direction == "inc", do: 1, else: -1
     new_page = assigns.page + direction
-    new_assigns = fetch_pagination_attributes(assigns.base_query, new_page, assigns.search_term)
+    new_assigns = fetch_pagination_attributes(assigns.base_query, new_page, assigns.search_term, assigns.sort_key, assigns.sort_direction)
 
     {:noreply, assign(socket, new_assigns)}
   end
 
   def handle_event("search_term", params, socket) do
     search_term = Map.get(params, "q", nil)
-    new_assigns = fetch_pagination_attributes(socket.assigns.base_query, 1, search_term)
+    new_assigns = fetch_pagination_attributes(socket.assigns.base_query, 1, search_term, socket.assigns.sort_key, socket.assigns.sort_direction)
 
     {:noreply, assign(socket, new_assigns)}
   end
@@ -126,21 +152,24 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
   end
 
   def handle_info(%{topic: "media_table", event: "reload"}, %{assigns: assigns} = socket) do
-    new_assigns = fetch_pagination_attributes(assigns.base_query, assigns.page, assigns.search_term)
+    new_assigns = fetch_pagination_attributes(assigns.base_query, assigns.page, assigns.search_term, assigns.sort_key, assigns.sort_direction)
 
     {:noreply, assign(socket, new_assigns)}
   end
 
-  defp fetch_pagination_attributes(base_query, page, ""), do: fetch_pagination_attributes(base_query, page, nil)
+  defp fetch_pagination_attributes(base_query, page, "", sort_key, sort_direction),
+    do: fetch_pagination_attributes(base_query, page, nil, sort_key, sort_direction)
 
-  defp fetch_pagination_attributes(base_query, page, nil) do
+  defp fetch_pagination_attributes(base_query, page, nil, sort_key, sort_direction) do
     total_record_count = Repo.aggregate(base_query, :count, :id)
     total_pages = max(ceil(total_record_count / @limit), 1)
     page = NumberUtils.clamp(page, 1, total_pages)
 
+    {sort_dir, sort_col} = sort_order(sort_key, sort_direction)
+
     records =
       fetch_records(base_query, page)
-      |> order_by(desc: :uploaded_at)
+      |> order_by([{^sort_dir, ^sort_col}])
       |> Repo.all()
 
     %{
@@ -153,7 +182,7 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
     }
   end
 
-  defp fetch_pagination_attributes(base_query, page, search_term) do
+  defp fetch_pagination_attributes(base_query, page, search_term, sort_key, sort_direction) do
     filtered_base_query = filtered_base_query(base_query, search_term)
 
     total_record_count = Repo.aggregate(base_query, :count, :id)
@@ -161,9 +190,11 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
     total_pages = max(ceil(filtered_record_count / @limit), 1)
     page = NumberUtils.clamp(page, 1, total_pages)
 
+    {sort_dir, sort_col} = sort_order(sort_key, sort_direction)
+
     records =
       fetch_records(filtered_base_query, page)
-      |> order_by(desc: fragment("rank"), desc: :uploaded_at)
+      |> order_by([{:desc, fragment("rank")}, {^sort_dir, ^sort_col}])
       |> Repo.all()
 
     %{
@@ -215,8 +246,26 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
     |> where(^MediaQuery.matches_search_term(search_term))
   end
 
+  defp sort_order(sort_key, sort_direction) do
+    key = if sort_key in @valid_sort_keys, do: String.to_existing_atom(sort_key), else: :uploaded_at
+    dir = if sort_direction == "asc", do: :asc, else: :desc
+    {dir, key}
+  end
+
+  defp format_duration(nil), do: ""
+
+  defp format_duration(seconds) do
+    h = div(seconds, 3600)
+    m = div(rem(seconds, 3600), 60)
+    s = rem(seconds, 60)
+
+    if h > 0,
+      do: :io_lib.format(~c"~B:~2..0B:~2..0B", [h, m, s]) |> IO.iodata_to_binary(),
+      else: :io_lib.format(~c"~B:~2..0B", [m, s]) |> IO.iodata_to_binary()
+  end
+
   # Selecting only what we need GREATLY speeds up queries on large tables
   defp select_fields do
-    [:id, :title, :uploaded_at, :prevent_download, :last_error]
+    [:id, :title, :uploaded_at, :prevent_download, :last_error, :duration_seconds]
   end
 end

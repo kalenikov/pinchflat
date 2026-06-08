@@ -16,8 +16,14 @@ patches deliberately.
   `PINCHFLAT_YT_DLP_IGNORE_NO_FORMATS_ERROR`.
 - `lib/pinchflat_web/controllers/sources/...`: remove sources table pagination
   for the local UI build.
-- `lib/pinchflat/http/http_client.ex`: add default `:httpc` request and connect
-  timeouts so external YouTube API/RSS calls cannot occupy Oban workers forever.
+- `lib/pinchflat/http/http_client.ex`: add default `:httpc` request/connect
+  timeouts, honor `HTTP_PROXY`/`HTTPS_PROXY` with `NO_PROXY`, and safely format
+  tuple errors from external YouTube API/RSS calls.
+- `lib/pinchflat_web/controllers/sources/source_html/media_item_table_live.ex`:
+  — Delete+Ignore button (trash icon) on Downloaded tab rows
+  — Sortable columns: Title, Upload Date, Duration (with chevron indicators)
+  — Duration column showing episode length in H:MM:SS / M:SS format
+  — Pagination limit increased from 10 to 100 rows per page
 
 ## Upgrade Checklist
 
