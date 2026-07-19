@@ -73,6 +73,7 @@ RUN mix release
 
 FROM ${RUNNER_IMAGE}
 
+ARG TARGETPLATFORM
 ARG PORT=8945
 
 COPY --from=builder ./usr/local/bin/ffmpeg /usr/bin/ffmpeg
@@ -109,7 +110,11 @@ RUN apt-get update -y && \
     export PIPX_BIN_DIR=/usr/local/bin && \
     (timeout 180 pipx install apprise || true) && \
     # yt-dlp
-    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp && \
+    export YT_DLP_DOWNLOAD=$(case ${TARGETPLATFORM:-linux/amd64} in \
+    "linux/amd64")   echo "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"   ;; \
+    "linux/arm64")   echo "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64" ;; \
+    *)               echo "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"        ;; esac) && \
+    curl -L ${YT_DLP_DOWNLOAD} -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \
     (timeout 90 yt-dlp -U || true) && \
     # Set the locale
