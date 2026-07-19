@@ -76,10 +76,10 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
         </:col>
         <:col :let={media_item} label="" class="flex justify-end">
           <.link
-            :if={@media_state == "downloaded"}
+            :if={show_ignore_button?(@media_state)}
             phx-click="delete_item"
             phx-value-id={media_item.id}
-            data-confirm="Delete files and prevent re-download?"
+            data-confirm={ignore_confirmation(@media_state)}
             class="mr-4 text-red-400 hover:text-red-300 cursor-pointer"
           >
             <.icon name="hero-trash" class="w-5 h-5" />
@@ -278,6 +278,11 @@ defmodule PinchflatWeb.Sources.MediaItemTableLive do
       do: :io_lib.format(~c"~B:~2..0B:~2..0B", [h, m, s]) |> IO.iodata_to_binary(),
       else: :io_lib.format(~c"~B:~2..0B", [m, s]) |> IO.iodata_to_binary()
   end
+
+  defp show_ignore_button?(media_state), do: media_state in ["downloaded", "pending"]
+
+  defp ignore_confirmation("pending"), do: nil
+  defp ignore_confirmation(_media_state), do: "Delete files and prevent re-download?"
 
   # Selecting only what we need GREATLY speeds up queries on large tables
   defp select_fields do

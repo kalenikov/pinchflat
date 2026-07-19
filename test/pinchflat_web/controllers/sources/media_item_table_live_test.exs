@@ -6,6 +6,7 @@ defmodule PinchflatWeb.Sources.MediaItemTableLiveTest do
   import Pinchflat.SourcesFixtures
   import Pinchflat.ProfilesFixtures
 
+  alias Pinchflat.Media
   alias PinchflatWeb.Sources.MediaItemTableLive
 
   setup do
@@ -87,18 +88,28 @@ defmodule PinchflatWeb.Sources.MediaItemTableLiveTest do
       assert html =~ "hero-trash"
     end
 
-    test "does not show delete button on pending tab", %{conn: conn, source: source} do
+    test "shows delete button on pending tab", %{conn: conn, source: source} do
       _media_item = media_item_fixture(source_id: source.id, media_filepath: nil)
 
       {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "pending"))
 
-      refute html =~ "hero-trash"
+      assert html =~ "hero-trash"
+      assert html =~ "Ignore this media item and prevent download?"
     end
 
     test "delete button triggers delete_item event with item id", %{conn: conn, source: source} do
       media_item = media_item_fixture(source_id: source.id)
 
       {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "downloaded"))
+
+      assert html =~ ~s(phx-click="delete_item")
+      assert html =~ ~s(phx-value-id="#{media_item.id}")
+    end
+
+    test "pending delete button triggers delete_item event with item id", %{conn: conn, source: source} do
+      media_item = media_item_fixture(source_id: source.id, media_filepath: nil)
+
+      {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "pending"))
 
       assert html =~ ~s(phx-click="delete_item")
       assert html =~ ~s(phx-value-id="#{media_item.id}")
@@ -113,6 +124,18 @@ defmodule PinchflatWeb.Sources.MediaItemTableLiveTest do
       render_hook(view, "delete_item", %{"id" => to_string(media_item.id)})
 
       refute render(view) =~ media_item.title
+    end
+
+    test "delete_item event ignores pending item and removes it from pending table", %{conn: conn, source: source} do
+      stub(UserScriptRunnerMock, :run, fn _event_type, _data -> {:ok, "", 0} end)
+      media_item = media_item_fixture(source_id: source.id, media_filepath: nil)
+
+      {:ok, view, _html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "pending"))
+
+      render_hook(view, "delete_item", %{"id" => to_string(media_item.id)})
+
+      refute render(view) =~ media_item.title
+      assert Media.get_media_item!(media_item.id).prevent_download
     end
   end
 
