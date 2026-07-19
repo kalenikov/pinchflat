@@ -76,6 +76,13 @@ defmodule PinchflatWeb.Sources.SourceController do
     render(conn, :show, source: source, pending_tasks: pending_tasks)
   end
 
+  # Deeplink target for the KalenikovPod (AntennaPod fork): resolves a source uuid
+  # (known to the mobile app from the RSS feed URL) to its numeric-id source page.
+  def show_by_uuid(conn, %{"uuid" => uuid}) do
+    source = Sources.get_source_by_uuid!(uuid)
+    redirect(conn, to: ~p"/sources/#{source.id}")
+  end
+
   def edit(conn, %{"id" => id}) do
     source = Sources.get_source!(id)
     changeset = Sources.change_source(source)

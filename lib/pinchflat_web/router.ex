@@ -51,6 +51,11 @@ defmodule PinchflatWeb.Router do
     get "/app_info", Settings.SettingController, :app_info
     get "/download_logs", Settings.SettingController, :download_logs
 
+    # Deeplink from the KalenikovPod (AntennaPod fork): the mobile app only knows the
+    # source uuid (from the RSS feed URL), but the source page needs the numeric id.
+    # Must be declared before `resources "/sources"` to keep intent explicit.
+    get "/sources/uuid/:uuid", Sources.SourceController, :show_by_uuid
+
     resources "/sources", Sources.SourceController do
       post "/force_download_pending", Sources.SourceController, :force_download_pending
       post "/force_redownload", Sources.SourceController, :force_redownload

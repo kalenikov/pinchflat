@@ -79,6 +79,13 @@ defmodule Pinchflat.Sources do
   def get_source!(id), do: Repo.get!(Source, id)
 
   @doc """
+  Gets a single source by its uuid.
+
+  Returns %Source{}. Raises `Ecto.NoResultsError` if the Source does not exist.
+  """
+  def get_source_by_uuid!(uuid), do: Repo.get_by!(Source, uuid: uuid)
+
+  @doc """
   Creates a source. May attempt to pull additional source details from the
   original_url (if provided). Will attempt to start indexing the source's
   media if successfully inserted.

@@ -41,6 +41,20 @@ defmodule PinchflatWeb.SourceControllerTest do
     end
   end
 
+  describe "show_by_uuid" do
+    test "redirects uuid to the numeric-id source page", %{conn: conn} do
+      source = source_fixture()
+      conn = get(conn, ~p"/sources/uuid/#{source.uuid}")
+      assert redirected_to(conn) == ~p"/sources/#{source.id}"
+    end
+
+    test "raises when uuid does not exist", %{conn: conn} do
+      assert_raise Ecto.NoResultsError, fn ->
+        get(conn, ~p"/sources/uuid/00000000-0000-0000-0000-000000000000")
+      end
+    end
+  end
+
   describe "new source" do
     test "renders form", %{conn: conn} do
       conn = get(conn, ~p"/sources/new")

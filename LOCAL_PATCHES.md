@@ -24,6 +24,12 @@ patches deliberately.
   — Sortable columns: Title, Upload Date, Duration (with chevron indicators)
   — Duration column showing episode length in H:MM:SS / M:SS format
   — Pagination limit increased from 10 to 100 rows per page
+- `lib/pinchflat_web/router.ex` + `.../sources/source_controller.ex` +
+  `lib/pinchflat/sources/sources.ex`: add `GET /sources/uuid/:uuid`
+  (`show_by_uuid`) that resolves a source uuid to a `302` redirect to the numeric
+  `/sources/:id` page. Deeplink target for the KalenikovPod (AntennaPod fork),
+  whose only stable per-source identifier is the uuid embedded in the RSS feed URL
+  (`/sources/:uuid/feed`).
 
 ## Upgrade Checklist
 
