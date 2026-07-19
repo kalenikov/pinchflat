@@ -211,6 +211,30 @@ defmodule Pinchflat.Downloading.DownloadOptionBuilder do
       "media_playlist_index" => pad_int(media_item_with_preloads.playlist_index),
       "media_upload_date_index" => pad_int(media_item_with_preloads.upload_date_index)
     }
+    |> Map.merge(non_youtube_template_overrides(media_item_with_preloads))
+  end
+
+  # For non-YouTube sources (eg: podcast RSS feeds), yt-dlp's generic extractor derives
+  # the title from the media file's name (eg: "034_JaumeCabre_JoConfesso"), so we substitute
+  # the title we indexed from the feed itself. YouTube sources are returned unchanged.
+  defp non_youtube_template_overrides(media_item_with_preloads) do
+    title = media_item_with_preloads.title
+
+    if Source.youtube_source?(media_item_with_preloads.source) || !is_binary(title) || title == "" do
+      %{}
+    else
+      %{"title" => sanitize_literal_for_template(title)}
+    end
+  end
+
+  # The value is injected verbatim into a yt-dlp output template, so template-sensitive
+  # characters (%, {}) and filesystem-unsafe characters must be neutralized
+  defp sanitize_literal_for_template(text) do
+    text
+    |> String.replace(~r/[\\\/:*?"<>|]/, "_")
+    |> String.replace(~r/[{}]/, "")
+    |> String.replace("%", "%%")
+    |> String.trim()
   end
 
   # I don't love the string manipulation here, but what can ya' do.

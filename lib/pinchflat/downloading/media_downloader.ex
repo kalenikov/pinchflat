@@ -10,6 +10,7 @@ defmodule Pinchflat.Downloading.MediaDownloader do
   alias Pinchflat.Repo
   alias Pinchflat.Media
   alias Pinchflat.Sources
+  alias Pinchflat.Sources.Source
   alias Pinchflat.Media.MediaItem
   alias Pinchflat.Utils.StringUtils
   alias Pinchflat.Metadata.NfoBuilder
@@ -127,6 +128,7 @@ defmodule Pinchflat.Downloading.MediaDownloader do
     parsed_attrs =
       parsed_json
       |> MetadataParser.parse_for_media_item()
+      |> preserve_indexed_attrs(media_with_preloads)
       |> Map.merge(%{
         media_downloaded_at: DateTime.utc_now(),
         culled_at: nil,
@@ -142,6 +144,23 @@ defmodule Pinchflat.Downloading.MediaDownloader do
     # Don't forgor to use preloaded associations or updates to
     # associations won't work!
     Media.update_media_item(media_with_preloads, parsed_attrs)
+  end
+
+  # For non-YouTube sources (eg: podcast RSS feeds), the download-time metadata comes from
+  # yt-dlp's generic extractor hitting the media file directly, so its title (filename-derived)
+  # and upload date are worse than what we indexed from the feed. Keep the indexed values.
+  # YouTube sources are returned unchanged.
+  defp preserve_indexed_attrs(parsed_attrs, media_with_preloads) do
+    if Source.youtube_source?(media_with_preloads.source) do
+      parsed_attrs
+    else
+      Enum.reduce([:title, :uploaded_at], parsed_attrs, fn key, acc ->
+        case Map.get(media_with_preloads, key) do
+          nil -> acc
+          value -> Map.put(acc, key, value)
+        end
+      end)
+    end
   end
 
   defp determine_nfo_filepath(media_item, parsed_json) do

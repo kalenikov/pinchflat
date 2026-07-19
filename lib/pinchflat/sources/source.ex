@@ -156,6 +156,12 @@ defmodule Pinchflat.Sources.Source do
     ~w(__meta__ __struct__ metadata tasks media_items)a
   end
 
+  @doc """
+  Returns true if the source points at YouTube. Non-YouTube sources (eg: podcast RSS
+  feeds handled by yt-dlp's generic extractor) get slightly different download handling.
+  """
+  def youtube_source?(%Source{original_url: url}), do: String.contains?(to_string(url), ["youtube.com", "youtu.be"])
+
   def youtube_channel_or_playlist_regex do
     # Validate that the original URL is not a video URL
     # Also matches if the string does NOT contain youtube.com or youtu.be. This preserves my tenuous support
