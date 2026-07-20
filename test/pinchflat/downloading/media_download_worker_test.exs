@@ -134,6 +134,27 @@ defmodule Pinchflat.Downloading.MediaDownloadWorkerTest do
       end)
     end
 
+    test "pauses the queue and snoozes when youtube rate-limits the session", %{media_item: media_item} do
+      # This message also contains "Video unavailable", so it must NOT be treated as a
+      # permanent per-video failure — it should snooze and schedule a queue resume.
+      rate_limit_message =
+        "ERROR: [youtube] abc: Video unavailable. This content isn't available, try again later. " <>
+          "The current session has been rate-limited by YouTube for up to an hour."
+
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:error, rate_limit_message, 1}
+      end)
+
+      Oban.Testing.with_testing_mode(:inline, fn ->
+        {:ok, job} = Oban.insert(MediaDownloadWorker.new(%{id: media_item.id, quality_upgrade?: true}))
+
+        # Snoozed for later (state "scheduled") rather than completed like a permanent
+        # "Video unavailable" failure — this is the whole point of the rate-limit branch.
+        assert job.state == "scheduled"
+      end)
+    end
+
     test "does not set the job to retryable if youtube thinks you're a bot", %{media_item: media_item} do
       expect(YtDlpRunnerMock, :run, 2, fn
         _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}

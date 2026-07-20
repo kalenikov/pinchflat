@@ -126,7 +126,12 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
   defp get_redownloaded_at(true), do: DateTime.utc_now()
   defp get_redownloaded_at(_), do: nil
 
+  # Pause the media_fetching queue for this long when YouTube rate-limits the session.
+  @rate_limit_pause_seconds 60 * 60
+
   defp action_on_error(message) do
+    msg = to_string(message)
+
     # This will attempt re-download at the next indexing, but it won't be retried
     # immediately as part of job failure logic
     non_retryable_errors = [
@@ -135,13 +140,43 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
       "This video is available to this channel's members"
     ]
 
-    if String.contains?(to_string(message), non_retryable_errors) do
-      Logger.error("yt-dlp download will not be retried: #{inspect(message)}")
+    # YouTube rate-limit errors also contain "Video unavailable", so this must be
+    # checked FIRST — otherwise they'd be misclassified as permanent per-video failures.
+    rate_limit_errors = [
+      "rate-limited",
+      "try again later"
+    ]
 
-      {:ok, :non_retry}
-    else
-      {:error, :download_failed}
+    cond do
+      String.contains?(msg, rate_limit_errors) ->
+        pause_media_fetching_for_rate_limit(message)
+        # Snooze this item so it is retried once the queue resumes.
+        {:snooze, @rate_limit_pause_seconds}
+
+      String.contains?(msg, non_retryable_errors) ->
+        Logger.error("yt-dlp download will not be retried: #{inspect(message)}")
+        {:ok, :non_retry}
+
+      true ->
+        {:error, :download_failed}
     end
+  end
+
+  # The whole session is rate-limited, so pausing just this job is pointless — every
+  # other queued download would hit the same wall. Pause the entire media_fetching
+  # queue and schedule a resume once the (roughly one hour) limit has passed.
+  defp pause_media_fetching_for_rate_limit(message) do
+    Logger.warning(
+      "YouTube session rate-limited; pausing media_fetching for #{@rate_limit_pause_seconds}s. Message: #{inspect(message)}"
+    )
+
+    try do
+      Oban.pause_queue(queue: :media_fetching, local_only: true)
+    rescue
+      e -> Logger.error("Could not pause media_fetching queue: #{inspect(e)}")
+    end
+
+    Pinchflat.Downloading.MediaFetchingResumeWorker.schedule_resume(@rate_limit_pause_seconds)
   end
 
   # NOTE: I like this pattern of using the default value so that I don't have to
