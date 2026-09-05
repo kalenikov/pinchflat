@@ -34,7 +34,8 @@ patches deliberately.
   travels back to `action_on_error/1`, and a failed save can no longer escape as a raw
   changeset.
 - `lib/pinchflat_web/controllers/sources/source_html/media_item_table_live.ex`:
-  — Delete+Ignore button (trash icon) on Downloaded tab rows
+  — Delete+Ignore button (trash icon) on Downloaded and Pending tab rows,
+    with no confirmation dialog on either tab (`data-confirm` intentionally absent)
   — Sortable columns: Title, Upload Date, Duration (with chevron indicators)
   — Duration column showing episode length in H:MM:SS / M:SS format
   — Pagination limit increased from 10 to 100 rows per page

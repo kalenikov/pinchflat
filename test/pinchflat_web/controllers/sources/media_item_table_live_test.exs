@@ -94,7 +94,8 @@ defmodule PinchflatWeb.Sources.MediaItemTableLiveTest do
       {:ok, _view, html} = live_isolated(conn, MediaItemTableLive, session: create_session(source, "pending"))
 
       assert html =~ "hero-trash"
-      assert html =~ "Ignore this media item and prevent download?"
+      # Deliberately no confirmation dialog on either tab — see LOCAL_PATCHES.md
+      refute html =~ "data-confirm"
     end
 
     test "delete button triggers delete_item event with item id", %{conn: conn, source: source} do

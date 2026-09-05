@@ -87,23 +87,9 @@ defmodule PinchflatWeb.Sources.SourceLive.IndexTableLiveTest do
     end
   end
 
-  describe "when testing pagination" do
-    test "moving to the next page loads new records", %{conn: conn} do
-      source1 = source_fixture(custom_name: "Source_A")
-      source2 = source_fixture(custom_name: "Source_B")
-
-      session = Map.merge(create_session(), %{"results_per_page" => 1})
-      {:ok, view, _html} = live_isolated(conn, IndexTableLive, session: session)
-
-      assert render_element(view, "tbody") =~ source1.custom_name
-      refute render_element(view, "tbody") =~ source2.custom_name
-
-      click_element(view, "span.pagination-next")
-
-      refute render_element(view, "tbody") =~ source1.custom_name
-      assert render_element(view, "tbody") =~ source2.custom_name
-    end
-  end
+  # Upstream's pagination test is gone: this fork removes sources table pagination
+  # entirely (see LOCAL_PATCHES.md), so the table always renders every source and the
+  # test could only ever fail here.
 
   describe "when testing the enable toggle" do
     test "updates the source's enabled status", %{conn: conn} do
