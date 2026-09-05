@@ -47,6 +47,15 @@ defmodule Pinchflat.Downloading.MediaDownloader do
         {:ok, updated_media_item} = Media.update_media_item(media_item, %{last_error: StringUtils.wrap_string(message)})
 
         {:recovered, updated_media_item, message}
+
+      # Belt-and-braces: a failed save must never escape as a raw changeset. It used to,
+      # and the resulting CaseClauseError bypassed the worker's error handling entirely.
+      {:error, %Ecto.Changeset{} = changeset} ->
+        message = "Failed to save media item ##{media_item.id}: #{inspect(changeset.errors)}"
+        Logger.error(message)
+        Media.update_media_item(media_item, %{last_error: StringUtils.wrap_string(message)})
+
+        {:error, :unknown, message}
     end
   end
 
@@ -114,8 +123,10 @@ defmodule Pinchflat.Downloading.MediaDownloader do
       anyway
       """)
 
-      {:ok, updated_media_item} = update_media_item_from_parsed_json(media_with_preloads, parsed_json)
-      {:recovered, updated_media_item, error_message}
+      case update_media_item_from_parsed_json(media_with_preloads, parsed_json) do
+        {:ok, updated_media_item} -> {:recovered, updated_media_item, error_message}
+        _ -> {:error, :unrecoverable, error_message}
+      end
     else
       err ->
         Logger.error("Unable to recover error for media item ##{media_with_preloads.id}: #{inspect(err)}")
@@ -125,25 +136,36 @@ defmodule Pinchflat.Downloading.MediaDownloader do
   end
 
   defp update_media_item_from_parsed_json(media_with_preloads, parsed_json) do
-    parsed_attrs =
-      parsed_json
-      |> MetadataParser.parse_for_media_item()
-      |> preserve_indexed_attrs(media_with_preloads)
-      |> Map.merge(%{
-        media_downloaded_at: DateTime.utc_now(),
-        culled_at: nil,
-        nfo_filepath: determine_nfo_filepath(media_with_preloads, parsed_json),
-        metadata: %{
-          # IDEA: might be worth kicking off a job for this since thumbnail fetching
-          # could fail and I want to handle that in isolation
-          metadata_filepath: MetadataFileHelpers.compress_and_store_metadata_for(media_with_preloads, parsed_json),
-          thumbnail_filepath: MetadataFileHelpers.download_and_store_thumbnail_for(media_with_preloads)
-        }
-      })
+    # The thumbnail is a separate yt-dlp call, so it can fail on its own — most importantly
+    # when YouTube rate-limits the session partway through. `thumbnail_filepath` is required
+    # by the metadata changeset, so a silent nil here would only surface as a save failure
+    # with the real reason already discarded. Bail out with the message intact instead and
+    # let the worker decide what it means (see `MediaDownloadWorker.action_on_error/1`).
+    case MetadataFileHelpers.download_and_store_thumbnail_with_status(media_with_preloads) do
+      {:ok, thumbnail_filepath} ->
+        parsed_attrs =
+          parsed_json
+          |> MetadataParser.parse_for_media_item()
+          |> preserve_indexed_attrs(media_with_preloads)
+          |> Map.merge(%{
+            media_downloaded_at: DateTime.utc_now(),
+            culled_at: nil,
+            nfo_filepath: determine_nfo_filepath(media_with_preloads, parsed_json),
+            metadata: %{
+              metadata_filepath: MetadataFileHelpers.compress_and_store_metadata_for(media_with_preloads, parsed_json),
+              thumbnail_filepath: thumbnail_filepath
+            }
+          })
 
-    # Don't forgor to use preloaded associations or updates to
-    # associations won't work!
-    Media.update_media_item(media_with_preloads, parsed_attrs)
+        # Don't forgor to use preloaded associations or updates to
+        # associations won't work!
+        Media.update_media_item(media_with_preloads, parsed_attrs)
+
+      {:error, message} ->
+        Logger.error("Thumbnail download failed for media item ##{media_with_preloads.id}: #{inspect(message)}")
+
+        {:error, :download_failed, message}
+    end
   end
 
   # For non-YouTube sources (eg: podcast RSS feeds), the download-time metadata comes from

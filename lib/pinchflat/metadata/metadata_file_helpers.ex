@@ -64,14 +64,30 @@ defmodule Pinchflat.Metadata.MetadataFileHelpers do
   Returns binary() | nil
   """
   def download_and_store_thumbnail_for(media_item_with_preloads) do
+    case download_and_store_thumbnail_with_status(media_item_with_preloads) do
+      {:ok, filepath} -> filepath
+      {:error, _message} -> nil
+    end
+  end
+
+  @doc """
+  Same as `download_and_store_thumbnail_for/1`, but reports _why_ the download failed
+  instead of swallowing it. Callers need this because a failing thumbnail fetch can be
+  the first sign that YouTube has rate-limited the session — a discardable per-item
+  failure and a session-wide ban look identical once the message is thrown away.
+
+  Returns {:ok, binary()} | {:error, binary()}
+  """
+  def download_and_store_thumbnail_with_status(media_item_with_preloads) do
     yt_dlp_filepath = generate_filepath_for(media_item_with_preloads, "thumbnail.%(ext)s")
     real_filepath = generate_filepath_for(media_item_with_preloads, "thumbnail.jpg")
     command_opts = [output: yt_dlp_filepath]
     addl_opts = [use_cookies: Sources.use_cookies?(media_item_with_preloads.source, :metadata)]
 
     case YtDlpMedia.download_thumbnail(media_item_with_preloads.original_url, command_opts, addl_opts) do
-      {:ok, _} -> real_filepath
-      _ -> nil
+      {:ok, _} -> {:ok, real_filepath}
+      {:error, message, _exit_code} -> {:error, to_string(message)}
+      err -> {:error, "Unknown error downloading thumbnail: #{inspect(err)}"}
     end
   end
 

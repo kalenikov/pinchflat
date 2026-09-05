@@ -82,6 +82,53 @@ defmodule Pinchflat.Downloading.MediaDownloaderTest do
       assert {:error, :unknown, message} = MediaDownloader.download_for_media_item(media_item)
       assert message == "Unknown error: {:error, :some_error}"
     end
+
+    test "thumbnail download errors are returned rather than raised", %{media_item: media_item} do
+      # The media itself downloads fine but the follow-up thumbnail fetch fails, which
+      # leaves `thumbnail_filepath` blank and makes the metadata changeset invalid.
+      # That must not blow up as a CaseClauseError.
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:ok, render_metadata(:media_metadata)}
+        _url, :download_thumbnail, _opts, _ot, _addl -> {:error, "boom", 1}
+      end)
+
+      assert {:error, :download_failed, message} = MediaDownloader.download_for_media_item(media_item)
+      assert message =~ "boom"
+    end
+
+    test "rate-limit errors during thumbnail download are surfaced verbatim", %{media_item: media_item} do
+      # The rate-limit wording is what lets the worker pause the whole queue, so it must
+      # survive the trip out of the thumbnail step untouched.
+      rate_limit_message =
+        "ERROR: [youtube] abc: This content isn't available, try again later. " <>
+          "The current session has been rate-limited by YouTube for up to an hour."
+
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:ok, render_metadata(:media_metadata)}
+        _url, :download_thumbnail, _opts, _ot, _addl -> {:error, rate_limit_message, 1}
+      end)
+
+      assert {:error, :download_failed, message} = MediaDownloader.download_for_media_item(media_item)
+      assert message =~ "rate-limited"
+    end
+
+    test "the media item records the thumbnail error instead of being marked as downloaded", %{
+      media_item: media_item
+    } do
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:ok, render_metadata(:media_metadata)}
+        _url, :download_thumbnail, _opts, _ot, _addl -> {:error, "boom", 1}
+      end)
+
+      assert {:error, :download_failed, _message} = MediaDownloader.download_for_media_item(media_item)
+
+      reloaded_media_item = Media.get_media_item!(media_item.id)
+      assert reloaded_media_item.last_error =~ "boom"
+      assert is_nil(reloaded_media_item.media_downloaded_at)
+    end
   end
 
   describe "download_for_media_item/3 when testing non-downloadable media" do

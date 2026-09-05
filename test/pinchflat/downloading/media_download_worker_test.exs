@@ -155,6 +155,29 @@ defmodule Pinchflat.Downloading.MediaDownloadWorkerTest do
       end)
     end
 
+    test "pauses the queue and snoozes when the rate-limit hits during thumbnail download", %{
+      media_item: media_item
+    } do
+      # The media downloads fine and only the follow-up thumbnail fetch gets rate-limited.
+      # This used to raise a CaseClauseError, which skipped the rate-limit handling entirely
+      # and let the queue keep hammering YouTube mid-ban.
+      rate_limit_message =
+        "ERROR: [youtube] abc: This content isn't available, try again later. " <>
+          "The current session has been rate-limited by YouTube for up to an hour."
+
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:ok, render_metadata(:media_metadata)}
+        _url, :download_thumbnail, _opts, _ot, _addl -> {:error, rate_limit_message, 1}
+      end)
+
+      Oban.Testing.with_testing_mode(:inline, fn ->
+        {:ok, job} = Oban.insert(MediaDownloadWorker.new(%{id: media_item.id}))
+
+        assert job.state == "scheduled"
+      end)
+    end
+
     test "does not set the job to retryable if youtube thinks you're a bot", %{media_item: media_item} do
       expect(YtDlpRunnerMock, :run, 2, fn
         _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}

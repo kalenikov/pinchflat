@@ -19,6 +19,20 @@ patches deliberately.
 - `lib/pinchflat/http/http_client.ex`: add default `:httpc` request/connect
   timeouts, honor `HTTP_PROXY`/`HTTPS_PROXY` with `NO_PROXY`, and safely format
   tuple errors from external YouTube API/RSS calls.
+- `lib/pinchflat/downloading/media_download_worker.ex`: on a YouTube session
+  rate-limit (`rate-limited` / `try again later`), pause the whole `media_fetching`
+  queue for an hour and schedule `MediaFetchingResumeWorker` to resume it, instead of
+  burning through the queue mid-ban.
+- `lib/pinchflat/downloading/media_downloader.ex` +
+  `lib/pinchflat/metadata/metadata_file_helpers.ex`: report thumbnail-download failures
+  instead of swallowing them. The thumbnail is a separate yt-dlp call, so a rate-limit
+  can hit it right after the media itself downloaded fine. `thumbnail_filepath` would
+  then be blank, the metadata changeset invalid, and `download_for_media_item/2` raised
+  `CaseClauseError` on the resulting `{:error, changeset}` — which skipped the rate-limit
+  handling above entirely and let the queue keep hammering YouTube (every subsequent item
+  came back `Video unavailable` and got marked permanently failed). The yt-dlp message now
+  travels back to `action_on_error/1`, and a failed save can no longer escape as a raw
+  changeset.
 - `lib/pinchflat_web/controllers/sources/source_html/media_item_table_live.ex`:
   — Delete+Ignore button (trash icon) on Downloaded tab rows
   — Sortable columns: Title, Upload Date, Duration (with chevron indicators)
