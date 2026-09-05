@@ -40,6 +40,8 @@ defmodule Pinchflat.Sources.Source do
     marked_for_deletion_at
     min_duration_seconds
     max_duration_seconds
+    archival_mode
+    archival_sleep_seconds
   )a
 
   # Expensive API calls are made when a source is inserted/updated so
@@ -79,6 +81,13 @@ defmodule Pinchflat.Sources.Source do
     field :index_frequency_minutes, :integer, default: 60 * 24
     field :fast_index, :boolean, default: false
     field :cookie_behaviour, Ecto.Enum, values: [:disabled, :when_needed, :all_operations], default: :disabled
+    # Archival mode: download the whole (in-cutoff) back catalogue as slowly as it takes,
+    # without ever putting the user's YouTube account in front of YouTube. See
+    # `Sources.use_cookies?/2` and `Sources.archival_sleep_seconds/1`.
+    field :archival_mode, :boolean, default: false
+    # Current pace for this source, grown on every rate-limit and never lowered.
+    # nil means "the base pace" — see `Sources.archival_base_sleep_seconds/0`.
+    field :archival_sleep_seconds, :integer
     field :download_media, :boolean, default: true
     field :last_indexed_at, :utc_datetime
     # Only download media items that were published after this date
@@ -127,11 +136,23 @@ defmodule Pinchflat.Sources.Source do
     |> validate_title_regex()
     |> validate_min_and_max_durations()
     |> validate_number(:retention_period_days, greater_than_or_equal_to: 0)
+    |> validate_number(:archival_sleep_seconds, greater_than_or_equal_to: 0)
+    |> reset_archival_sleep_when_disabled()
     # Ensures it ends with `.{{ ext }}` or `.%(ext)s` or similar (with a little wiggle room)
     |> validate_format(:output_path_template_override, MediaProfile.ext_regex(), message: "must end with .{{ ext }}")
     |> validate_format(:original_url, youtube_channel_or_playlist_regex(), message: "must be a channel or playlist URL")
     |> cast_assoc(:metadata, with: &SourceMetadata.changeset/2, required: false)
     |> unique_constraint([:collection_id, :media_profile_id, :title_filter_regex], error_key: :original_url)
+  end
+
+  # Turning archival mode off forgets whatever pace it had grown to, so the next
+  # archival run starts from the base pace again rather than from an old punishment.
+  defp reset_archival_sleep_when_disabled(changeset) do
+    if get_field(changeset, :archival_mode) do
+      changeset
+    else
+      put_change(changeset, :archival_sleep_seconds, nil)
+    end
   end
 
   @doc false

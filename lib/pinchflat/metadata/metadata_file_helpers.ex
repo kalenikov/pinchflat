@@ -82,7 +82,10 @@ defmodule Pinchflat.Metadata.MetadataFileHelpers do
     yt_dlp_filepath = generate_filepath_for(media_item_with_preloads, "thumbnail.%(ext)s")
     real_filepath = generate_filepath_for(media_item_with_preloads, "thumbnail.jpg")
     command_opts = [output: yt_dlp_filepath]
-    addl_opts = [use_cookies: Sources.use_cookies?(media_item_with_preloads.source, :metadata)]
+
+    addl_opts =
+      [use_cookies: Sources.use_cookies?(media_item_with_preloads.source, :metadata)] ++
+        Sources.archival_pace_opts(media_item_with_preloads.source)
 
     case YtDlpMedia.download_thumbnail(media_item_with_preloads.original_url, command_opts, addl_opts) do
       {:ok, _} -> {:ok, real_filepath}

@@ -2,6 +2,7 @@ defmodule Pinchflat.Downloading.MediaDownloadWorkerTest do
   use Pinchflat.DataCase
 
   import Pinchflat.MediaFixtures
+  import Pinchflat.SourcesFixtures
 
   alias Pinchflat.Media
   alias Pinchflat.Sources
@@ -176,6 +177,46 @@ defmodule Pinchflat.Downloading.MediaDownloadWorkerTest do
 
         assert job.state == "scheduled"
       end)
+    end
+
+    test "slows an archival source down when youtube rate-limits the session" do
+      rate_limit_message =
+        "ERROR: [youtube] abc: This content isn't available, try again later. " <>
+          "The current session has been rate-limited by YouTube for up to an hour."
+
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:error, rate_limit_message, 1}
+      end)
+
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+
+      Oban.Testing.with_testing_mode(:inline, fn ->
+        {:ok, _job} = Oban.insert(MediaDownloadWorker.new(%{id: media_item.id}))
+      end)
+
+      assert Sources.get_source!(source.id).archival_sleep_seconds ==
+               Sources.archival_base_sleep_seconds() * 2
+    end
+
+    test "leaves non-archival sources' pace alone on a rate-limit", %{media_item: media_item} do
+      rate_limit_message =
+        "ERROR: [youtube] abc: This content isn't available, try again later. " <>
+          "The current session has been rate-limited by YouTube for up to an hour."
+
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:error, rate_limit_message, 1}
+      end)
+
+      Oban.Testing.with_testing_mode(:inline, fn ->
+        {:ok, _job} = Oban.insert(MediaDownloadWorker.new(%{id: media_item.id}))
+      end)
+
+      source = Sources.get_source!(media_item.source_id)
+      refute source.archival_mode
+      assert is_nil(source.archival_sleep_seconds)
     end
 
     test "does not set the job to retryable if youtube thinks you're a bot", %{media_item: media_item} do

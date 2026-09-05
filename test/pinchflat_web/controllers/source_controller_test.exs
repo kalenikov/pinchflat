@@ -76,6 +76,27 @@ defmodule PinchflatWeb.SourceControllerTest do
       assert html_response(conn, 200) =~ "2021-01-01"
       refute html_response(conn, 200) =~ source.custom_name
     end
+
+    test "offers archival mode", %{conn: conn} do
+      conn = get(conn, ~p"/sources/new")
+      assert html_response(conn, 200) =~ "Archival Mode"
+    end
+  end
+
+  describe "edit source when in archival mode" do
+    test "shows the pace once it has been slowed down", %{conn: conn} do
+      source = source_fixture(%{archival_mode: true, archival_sleep_seconds: 720})
+
+      conn = get(conn, ~p"/sources/#{source}/edit")
+      assert html_response(conn, 200) =~ "Currently 720s between requests"
+    end
+
+    test "says nothing about the pace while the source is still at the base pace", %{conn: conn} do
+      source = source_fixture(%{archival_mode: true})
+
+      conn = get(conn, ~p"/sources/#{source}/edit")
+      refute html_response(conn, 200) =~ "between requests"
+    end
   end
 
   describe "create source" do

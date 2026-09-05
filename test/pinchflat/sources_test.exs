@@ -87,6 +87,104 @@ defmodule Pinchflat.SourcesTest do
     end
   end
 
+  describe "use_cookies?/2 when the source is in archival mode" do
+    # The point of archival mode is that the user's YouTube account never fronts a long
+    # back-catalogue crawl, so a session ban can't touch the account. Cookies are allowed
+    # for exactly one thing: retrying a single video that anonymous access can't reach.
+    setup do
+      {:ok, %{source: source_fixture(%{archival_mode: true, cookie_behaviour: :all_operations})}}
+    end
+
+    test "does not use cookies for indexing", %{source: source} do
+      refute Sources.use_cookies?(source, :indexing)
+    end
+
+    test "does not use cookies for downloading", %{source: source} do
+      refute Sources.use_cookies?(source, :downloading)
+    end
+
+    test "does not use cookies for metadata", %{source: source} do
+      refute Sources.use_cookies?(source, :metadata)
+    end
+
+    test "still allows the single cookie retry for an unreachable video", %{source: source} do
+      assert Sources.use_cookies?(source, :error_recovery)
+    end
+
+    test "wins over the global PINCHFLAT_FORCE_COOKIES override", %{source: source} do
+      # Without this the checkbox would be decorative on this install, which is exactly
+      # how the account ended up fronting every request in the first place.
+      System.put_env("PINCHFLAT_FORCE_COOKIES", "1")
+      on_exit(fn -> System.delete_env("PINCHFLAT_FORCE_COOKIES") end)
+
+      refute Sources.use_cookies?(source, :downloading)
+      assert Sources.use_cookies?(source, :error_recovery)
+    end
+
+    test "leaves sources that are not in archival mode alone" do
+      System.put_env("PINCHFLAT_FORCE_COOKIES", "1")
+      on_exit(fn -> System.delete_env("PINCHFLAT_FORCE_COOKIES") end)
+
+      source = source_fixture(%{archival_mode: false, cookie_behaviour: :disabled})
+
+      assert Sources.use_cookies?(source, :downloading)
+    end
+  end
+
+  describe "archival_sleep_seconds/1" do
+    test "returns nil when the source is not in archival mode" do
+      source = source_fixture(%{archival_mode: false})
+      assert is_nil(Sources.archival_sleep_seconds(source))
+    end
+
+    test "returns the base pace when archival mode has not been slowed down yet" do
+      source = source_fixture(%{archival_mode: true, archival_sleep_seconds: nil})
+      assert Sources.archival_sleep_seconds(source) == Sources.archival_base_sleep_seconds()
+    end
+
+    test "returns the grown pace once the source has been slowed down" do
+      source = source_fixture(%{archival_mode: true, archival_sleep_seconds: 720})
+      assert Sources.archival_sleep_seconds(source) == 720
+    end
+  end
+
+  describe "slow_down_archival_pace/1" do
+    test "doubles the pace from the base on the first rate-limit" do
+      source = source_fixture(%{archival_mode: true})
+
+      assert {:ok, slowed} = Sources.slow_down_archival_pace(source)
+      assert slowed.archival_sleep_seconds == Sources.archival_base_sleep_seconds() * 2
+    end
+
+    test "keeps doubling on each subsequent rate-limit" do
+      source = source_fixture(%{archival_mode: true, archival_sleep_seconds: 360})
+
+      assert {:ok, slowed} = Sources.slow_down_archival_pace(source)
+      assert slowed.archival_sleep_seconds == 720
+    end
+
+    test "never exceeds the ceiling" do
+      source = source_fixture(%{archival_mode: true, archival_sleep_seconds: 3000})
+
+      assert {:ok, slowed} = Sources.slow_down_archival_pace(source)
+      assert slowed.archival_sleep_seconds == Sources.archival_max_sleep_seconds()
+    end
+
+    test "leaves sources outside archival mode untouched" do
+      source = source_fixture(%{archival_mode: false})
+
+      assert {:ok, unchanged} = Sources.slow_down_archival_pace(source)
+      assert is_nil(unchanged.archival_sleep_seconds)
+    end
+
+    test "turning archival mode off forgets the grown pace" do
+      source = source_fixture(%{archival_mode: true, archival_sleep_seconds: 720})
+
+      assert {:ok, updated} = Sources.update_source(source, %{archival_mode: false})
+      assert is_nil(updated.archival_sleep_seconds)
+    end
+  end
+
   describe "list_sources/0" do
     test "it returns all sources" do
       source = source_fixture()

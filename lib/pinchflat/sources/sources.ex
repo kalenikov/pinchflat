@@ -38,14 +38,85 @@ defmodule Pinchflat.Sources do
   Returns boolean()
   """
   def use_cookies?(source, operation) when operation in [:indexing, :downloading, :metadata, :error_recovery] do
-    if force_cookies_enabled?() do
-      true
-    else
-      case source.cookie_behaviour do
-        :disabled -> false
-        :all_operations -> true
-        :when_needed -> operation in [:indexing, :error_recovery]
-      end
+    cond do
+      # Checked before everything else on purpose. Archival mode exists to keep the
+      # account out of a long back-catalogue crawl entirely, so neither the source's own
+      # setting nor the global force-cookies override may put it back in. The one
+      # exception is :error_recovery — a single retry for a video anonymous access
+      # can't reach (age-gated, members-only).
+      source.archival_mode -> operation == :error_recovery
+      force_cookies_enabled?() -> true
+      true -> cookie_behaviour_allows?(source.cookie_behaviour, operation)
+    end
+  end
+
+  @archival_base_sleep_seconds 180
+  @archival_max_sleep_seconds 3600
+
+  @doc """
+  The pace archival mode starts at, in seconds between yt-dlp requests.
+
+  Empirically safe rather than theoretically: on 2026-09-04 this source downloaded 17
+  videos back-to-back at a real-world spacing of ~4.6 minutes without a single rate-limit,
+  while a ~40 second spacing got the session banned on the fifth request the next day.
+
+  Returns integer()
+  """
+  def archival_base_sleep_seconds, do: @archival_base_sleep_seconds
+
+  @doc """
+  The ceiling archival mode will slow itself down to.
+
+  Returns integer()
+  """
+  def archival_max_sleep_seconds, do: @archival_max_sleep_seconds
+
+  @doc """
+  The pace to use for a source's yt-dlp calls, or nil for sources that should just use
+  the global setting.
+
+  Returns integer() | nil
+  """
+  def archival_sleep_seconds(%Source{archival_mode: true} = source) do
+    source.archival_sleep_seconds || @archival_base_sleep_seconds
+  end
+
+  def archival_sleep_seconds(%Source{}), do: nil
+
+  @doc """
+  The yt-dlp runner options carrying a source's archival pace — empty for sources that
+  should just use the global setting, so callers can append it unconditionally.
+
+  Returns keyword()
+  """
+  def archival_pace_opts(%Source{} = source) do
+    case archival_sleep_seconds(source) do
+      nil -> []
+      seconds -> [sleep_interval_override: seconds]
+    end
+  end
+
+  @doc """
+  Slows a source's archival pace down after YouTube pushed back, doubling it up to the
+  ceiling. Deliberately one-way: nothing speeds a source back up except the user turning
+  archival mode off, so the crawl can never wander back into the pace that got it banned.
+
+  Returns {:ok, %Source{}} | {:error, %Ecto.Changeset{}}
+  """
+  def slow_down_archival_pace(%Source{archival_mode: true} = source) do
+    doubled = archival_sleep_seconds(source) * 2
+    capped = min(doubled, @archival_max_sleep_seconds)
+
+    update_source(source, %{archival_sleep_seconds: capped})
+  end
+
+  def slow_down_archival_pace(%Source{} = source), do: {:ok, source}
+
+  defp cookie_behaviour_allows?(cookie_behaviour, operation) do
+    case cookie_behaviour do
+      :disabled -> false
+      :all_operations -> true
+      :when_needed -> operation in [:indexing, :error_recovery]
     end
   end
 

@@ -189,6 +189,71 @@ defmodule Pinchflat.Downloading.MediaDownloaderTest do
     end
   end
 
+  describe "download_for_media_item/3 when testing archival mode" do
+    test "every yt-dlp call for the media item carries the archival pace" do
+      # All three calls hit YouTube, so all three have to be slowed down — the thumbnail
+      # fetch included, since that is where the rate-limit landed on 2026-09-05.
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, addl ->
+          assert {:sleep_interval_override, 180} in addl
+          {:ok, "{}"}
+
+        _url, :download, _opts, _ot, addl ->
+          assert {:sleep_interval_override, 180} in addl
+          {:ok, render_metadata(:media_metadata)}
+
+        _url, :download_thumbnail, _opts, _ot, addl ->
+          assert {:sleep_interval_override, 180} in addl
+          {:ok, ""}
+      end)
+
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id})
+
+      assert {:ok, _} = MediaDownloader.download_for_media_item(media_item)
+    end
+
+    test "uses the grown pace once the source has been slowed down" do
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, addl ->
+          assert {:sleep_interval_override, 720} in addl
+          {:ok, "{}"}
+
+        _url, :download, _opts, _ot, addl ->
+          assert {:sleep_interval_override, 720} in addl
+          {:ok, render_metadata(:media_metadata)}
+
+        _url, :download_thumbnail, _opts, _ot, _addl ->
+          {:ok, ""}
+      end)
+
+      source = source_fixture(%{archival_mode: true, archival_sleep_seconds: 720})
+      media_item = media_item_fixture(%{source_id: source.id})
+
+      assert {:ok, _} = MediaDownloader.download_for_media_item(media_item)
+    end
+
+    test "sources outside archival mode are left at the global pace" do
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, addl ->
+          refute Keyword.has_key?(addl, :sleep_interval_override)
+          {:ok, "{}"}
+
+        _url, :download, _opts, _ot, addl ->
+          refute Keyword.has_key?(addl, :sleep_interval_override)
+          {:ok, render_metadata(:media_metadata)}
+
+        _url, :download_thumbnail, _opts, _ot, _addl ->
+          {:ok, ""}
+      end)
+
+      source = source_fixture(%{archival_mode: false})
+      media_item = media_item_fixture(%{source_id: source.id})
+
+      assert {:ok, _} = MediaDownloader.download_for_media_item(media_item)
+    end
+  end
+
   describe "download_for_media_item/3 when testing cookie usage" do
     test "sets use_cookies if the source uses cookies" do
       expect(YtDlpRunnerMock, :run, 3, fn

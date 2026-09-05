@@ -140,7 +140,10 @@ defmodule Pinchflat.YtDlp.CommandRunner do
   end
 
   defp sleep_interval_opts(addl_opts) do
-    sleep_interval = Settings.get!(:extractor_sleep_interval_seconds)
+    # A source in archival mode sets its own (much slower) pace, which has to beat the
+    # global setting in both directions — including when the global setting is 0.
+    sleep_interval =
+      Keyword.get(addl_opts, :sleep_interval_override) || Settings.get!(:extractor_sleep_interval_seconds)
 
     if sleep_interval <= 0 || Keyword.get(addl_opts, :skip_sleep_interval) do
       []

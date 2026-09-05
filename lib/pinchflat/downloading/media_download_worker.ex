@@ -13,6 +13,7 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
   alias Pinchflat.Tasks
   alias Pinchflat.Repo
   alias Pinchflat.Media
+  alias Pinchflat.Sources
   alias Pinchflat.Media.FileSyncing
   alias Pinchflat.Downloading.MediaDownloader
 
@@ -112,7 +113,7 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
         {:ok, :non_retry}
 
       {:error, _error_atom, message} ->
-        action_on_error(message)
+        action_on_error(message, media_item)
     end
   end
 
@@ -129,7 +130,7 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
   # Pause the media_fetching queue for this long when YouTube rate-limits the session.
   @rate_limit_pause_seconds 60 * 60
 
-  defp action_on_error(message) do
+  defp action_on_error(message, media_item) do
     msg = to_string(message)
 
     # This will attempt re-download at the next indexing, but it won't be retried
@@ -150,6 +151,7 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
     cond do
       String.contains?(msg, rate_limit_errors) ->
         pause_media_fetching_for_rate_limit(message)
+        slow_down_archival_source(media_item)
         # Snooze this item so it is retried once the queue resumes.
         {:snooze, @rate_limit_pause_seconds}
 
@@ -159,6 +161,21 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
 
       true ->
         {:error, :download_failed}
+    end
+  end
+
+  # An archival source just found out its current pace is too fast for YouTube today, so
+  # it permanently backs off. The hourly queue pause above only buys time; without this
+  # the crawl would resume at exactly the pace that just got it banned.
+  defp slow_down_archival_source(media_item) do
+    source = Repo.preload(media_item, :source).source
+
+    case Sources.slow_down_archival_pace(source) do
+      {:ok, %{archival_mode: true} = slowed} ->
+        Logger.warning("Archival source ##{slowed.id} slowed to #{slowed.archival_sleep_seconds}s between requests")
+
+      _ ->
+        :ok
     end
   end
 

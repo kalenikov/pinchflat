@@ -27,6 +27,17 @@ defmodule PinchflatWeb.Sources.SourceHTML do
     ]
   end
 
+  @doc """
+  A read-only note about how far archival mode has had to slow a source down.
+  Returns nil for sources still running at the base pace, so the form can hide the line.
+  """
+  def archival_pace_note(nil), do: nil
+
+  def archival_pace_note(seconds) do
+    "Currently #{seconds}s between requests \u2014 raised from a base of " <>
+      "#{Pinchflat.Sources.archival_base_sleep_seconds()}s because YouTube pushed back."
+  end
+
   def friendly_cookie_behaviours do
     [
       {"Disabled", :disabled},

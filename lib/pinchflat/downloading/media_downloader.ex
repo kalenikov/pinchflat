@@ -201,9 +201,11 @@ defmodule Pinchflat.Downloading.MediaDownloader do
     source_uses_cookies = Sources.use_cookies?(item_with_preloads.source, :downloading)
     should_use_cookies = force_use_cookies || source_uses_cookies
 
-    runner_opts = [output_filepath: output_filepath, use_cookies: should_use_cookies]
+    pace_opts = Sources.archival_pace_opts(item_with_preloads.source)
+    runner_opts = [output_filepath: output_filepath, use_cookies: should_use_cookies] ++ pace_opts
+    status_opts = [use_cookies: should_use_cookies] ++ pace_opts
 
-    case {YtDlpMedia.get_downloadable_status(url, use_cookies: should_use_cookies), should_use_cookies} do
+    case {YtDlpMedia.get_downloadable_status(url, status_opts), should_use_cookies} do
       {{:ok, :downloadable}, _} ->
         YtDlpMedia.download(url, options, runner_opts)
 

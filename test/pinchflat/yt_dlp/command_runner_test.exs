@@ -125,6 +125,31 @@ defmodule Pinchflat.YtDlp.CommandRunnerTest do
       refute String.contains?(output, "--sleep-subtitles")
     end
 
+    test "sleep_interval_override wins over the global setting" do
+      Settings.set(extractor_sleep_interval_seconds: 5)
+
+      assert {:ok, output} = Runner.run(@media_url, :foo, [], "", sleep_interval_override: 180)
+
+      assert [_, interval] = Regex.run(~r/--sleep-interval (\d+)/, output)
+      assert String.to_integer(interval) >= 180
+    end
+
+    test "sleep_interval_override applies even when the global setting is disabled" do
+      Settings.set(extractor_sleep_interval_seconds: 0)
+
+      assert {:ok, output} = Runner.run(@media_url, :foo, [], "", sleep_interval_override: 180)
+
+      assert String.contains?(output, "--sleep-interval")
+    end
+
+    test "skip_sleep_interval still wins over sleep_interval_override" do
+      opts = [sleep_interval_override: 180, skip_sleep_interval: true]
+
+      assert {:ok, output} = Runner.run(@media_url, :foo, [], "", opts)
+
+      refute String.contains?(output, "--sleep-interval")
+    end
+
     test "includes limit_rate option when specified" do
       Settings.set(download_throughput_limit: "100K")
 
