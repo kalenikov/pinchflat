@@ -4,7 +4,6 @@ defmodule Pinchflat.Metadata.MetadataFileHelpersTest do
   import Pinchflat.MediaFixtures
   import Pinchflat.SourcesFixtures
 
-  alias Pinchflat.Downloading.DownloadOptionBuilder
   alias Pinchflat.Metadata.MetadataFileHelpers, as: Helpers
   alias Pinchflat.Utils.FilesystemUtils
 
@@ -105,13 +104,16 @@ defmodule Pinchflat.Metadata.MetadataFileHelpersTest do
       # YouTube for the very same image is a third round-trip for nothing.
       expect(YtDlpRunnerMock, :run, 0, fn _url, :download_thumbnail, _opts, _ot, _addl -> {:ok, ""} end)
 
-      existing = DownloadOptionBuilder.thumbnail_location_for(media_item)
+      # Spelled out rather than derived from the code under test: the first version of this
+      # used the profile's output template, which is full of yt-dlp placeholders and never
+      # matches a real file — the test passed and the feature did nothing.
+      media_filepath = "/tmp/test/downloads/Some Channel/2022-01-01 Title [abc123].opus"
+      existing = "/tmp/test/downloads/Some Channel/2022-01-01 Title [abc123]-thumb.jpg"
       FilesystemUtils.write_p!(existing, "thumbnail-bytes")
-      # The DB rolls back between tests but the filesystem does not, and media item IDs
-      # repeat — a leftover file here would silently satisfy every later thumbnail test.
+      # The DB rolls back between tests but the filesystem does not.
       on_exit(fn -> File.rm(existing) end)
 
-      filepath = Helpers.download_and_store_thumbnail_for(media_item)
+      {:ok, filepath} = Helpers.download_and_store_thumbnail_with_status(media_item, media_filepath)
 
       assert filepath =~ ~r{/media_items/#{media_item.id}/thumbnail.jpg}
       assert File.read!(filepath) == "thumbnail-bytes"

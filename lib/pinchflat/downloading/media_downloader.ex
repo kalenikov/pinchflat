@@ -164,12 +164,21 @@ defmodule Pinchflat.Downloading.MediaDownloader do
     # by the metadata changeset, so a silent nil here would only surface as a save failure
     # with the real reason already discarded. Bail out with the message intact instead and
     # let the worker decide what it means (see `MediaDownloadWorker.action_on_error/1`).
-    case MetadataFileHelpers.download_and_store_thumbnail_with_status(media_with_preloads) do
+    downloaded_attrs =
+      parsed_json
+      |> MetadataParser.parse_for_media_item()
+      |> preserve_indexed_attrs(media_with_preloads)
+
+    thumbnail_status =
+      MetadataFileHelpers.download_and_store_thumbnail_with_status(
+        media_with_preloads,
+        Map.get(downloaded_attrs, :media_filepath)
+      )
+
+    case thumbnail_status do
       {:ok, thumbnail_filepath} ->
         parsed_attrs =
-          parsed_json
-          |> MetadataParser.parse_for_media_item()
-          |> preserve_indexed_attrs(media_with_preloads)
+          downloaded_attrs
           |> Map.merge(%{
             media_downloaded_at: DateTime.utc_now(),
             culled_at: nil,

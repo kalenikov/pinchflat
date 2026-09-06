@@ -9,7 +9,6 @@ defmodule Pinchflat.Metadata.MetadataFileHelpers do
   needed
   """
 
-  alias Pinchflat.Downloading.DownloadOptionBuilder
   alias Pinchflat.Sources
   alias Pinchflat.Utils.FilesystemUtils
 
@@ -79,8 +78,8 @@ defmodule Pinchflat.Metadata.MetadataFileHelpers do
 
   Returns {:ok, binary()} | {:error, binary()}
   """
-  def download_and_store_thumbnail_with_status(media_item_with_preloads) do
-    case copy_thumbnail_from_download(media_item_with_preloads) do
+  def download_and_store_thumbnail_with_status(media_item_with_preloads, downloaded_media_filepath \\ nil) do
+    case copy_thumbnail_from_download(media_item_with_preloads, downloaded_media_filepath) do
       {:ok, filepath} -> {:ok, filepath}
       :no_local_copy -> fetch_thumbnail_from_backend(media_item_with_preloads)
     end
@@ -90,8 +89,14 @@ defmodule Pinchflat.Metadata.MetadataFileHelpers do
   # image next to the media file. Copying it costs nothing; re-fetching it is a third
   # round-trip to YouTube per video, and on an archival crawl that is a third of the
   # requests (and a third of the ban surface) spent on a file already on disk.
-  defp copy_thumbnail_from_download(media_item_with_preloads) do
-    downloaded_thumbnail = DownloadOptionBuilder.thumbnail_location_for(media_item_with_preloads)
+  #
+  # The path has to come from the media file yt-dlp actually produced: the profile's
+  # output template is full of yt-dlp placeholders and only becomes a real path once
+  # yt-dlp expands it.
+  defp copy_thumbnail_from_download(_media_item_with_preloads, nil), do: :no_local_copy
+
+  defp copy_thumbnail_from_download(media_item_with_preloads, media_filepath) do
+    downloaded_thumbnail = thumbnail_beside(media_filepath)
 
     if File.exists?(downloaded_thumbnail) do
       destination = generate_filepath_for(media_item_with_preloads, "thumbnail.jpg")
@@ -101,6 +106,14 @@ defmodule Pinchflat.Metadata.MetadataFileHelpers do
     else
       :no_local_copy
     end
+  end
+
+  # `<name>.opus` -> `<name>-thumb.jpg`, matching the `-thumb` suffix the download inserts
+  # before the extension.
+  defp thumbnail_beside(media_filepath) do
+    extension = Path.extname(media_filepath)
+
+    String.replace_suffix(media_filepath, extension, "-thumb.jpg")
   end
 
   defp fetch_thumbnail_from_backend(media_item_with_preloads) do

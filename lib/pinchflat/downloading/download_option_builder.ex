@@ -237,17 +237,6 @@ defmodule Pinchflat.Downloading.DownloadOptionBuilder do
     |> String.trim()
   end
 
-  @doc """
-  Where the download itself writes a media item's thumbnail, when the media profile asks
-  for one. Public so the metadata step can reuse that file instead of fetching the same
-  image from YouTube a second time.
-
-  Returns binary()
-  """
-  def thumbnail_location_for(media_item_with_preloads) do
-    determine_thumbnail_location(media_item_with_preloads)
-  end
-
   # I don't love the string manipulation here, but what can ya' do.
   # It's dependent on the output_path_template being a string ending `.{{ ext }}`
   # (or equivalent), but that's validated by the MediaProfile schema.
