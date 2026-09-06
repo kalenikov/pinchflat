@@ -114,6 +114,29 @@ defmodule Pinchflat.Downloading.MediaDownloader do
     end
   end
 
+  # The live check exists to avoid grabbing a stream that is still running. On an archival
+  # crawl of a back catalogue the answer is known in advance, and asking anyway costs a
+  # round-trip to YouTube per video — a third of the requests such a crawl makes.
+  # Only skipped where it is provably safe: an archival source, a video uploaded well in
+  # the past, and nothing on record saying it was ever a livestream.
+  defp downloadable_status(url, item_with_preloads, status_opts) do
+    if live_check_skippable?(item_with_preloads) do
+      {:ok, :downloadable}
+    else
+      YtDlpMedia.get_downloadable_status(url, status_opts)
+    end
+  end
+
+  defp live_check_skippable?(%MediaItem{livestream: true}), do: false
+
+  defp live_check_skippable?(%MediaItem{source: %{archival_mode: true}} = media_item) do
+    cutoff = DateTime.add(DateTime.utc_now(), -1, :day)
+
+    DateTime.compare(media_item.uploaded_at, cutoff) == :lt
+  end
+
+  defp live_check_skippable?(%MediaItem{}), do: false
+
   defp attempt_recovery_from_error(media_with_preloads, output_filepath, error_message) do
     with {:ok, contents} <- File.read(output_filepath),
          {:ok, parsed_json} <- Phoenix.json_library().decode(contents) do
@@ -205,7 +228,7 @@ defmodule Pinchflat.Downloading.MediaDownloader do
     runner_opts = [output_filepath: output_filepath, use_cookies: should_use_cookies] ++ pace_opts
     status_opts = [use_cookies: should_use_cookies] ++ pace_opts
 
-    case {YtDlpMedia.get_downloadable_status(url, status_opts), should_use_cookies} do
+    case {downloadable_status(url, item_with_preloads, status_opts), should_use_cookies} do
       {{:ok, :downloadable}, _} ->
         YtDlpMedia.download(url, options, runner_opts)
 

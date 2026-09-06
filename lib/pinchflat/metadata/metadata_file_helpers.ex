@@ -9,6 +9,7 @@ defmodule Pinchflat.Metadata.MetadataFileHelpers do
   needed
   """
 
+  alias Pinchflat.Downloading.DownloadOptionBuilder
   alias Pinchflat.Sources
   alias Pinchflat.Utils.FilesystemUtils
 
@@ -79,6 +80,30 @@ defmodule Pinchflat.Metadata.MetadataFileHelpers do
   Returns {:ok, binary()} | {:error, binary()}
   """
   def download_and_store_thumbnail_with_status(media_item_with_preloads) do
+    case copy_thumbnail_from_download(media_item_with_preloads) do
+      {:ok, filepath} -> {:ok, filepath}
+      :no_local_copy -> fetch_thumbnail_from_backend(media_item_with_preloads)
+    end
+  end
+
+  # When the media profile downloads thumbnails, yt-dlp has already written this exact
+  # image next to the media file. Copying it costs nothing; re-fetching it is a third
+  # round-trip to YouTube per video, and on an archival crawl that is a third of the
+  # requests (and a third of the ban surface) spent on a file already on disk.
+  defp copy_thumbnail_from_download(media_item_with_preloads) do
+    downloaded_thumbnail = DownloadOptionBuilder.thumbnail_location_for(media_item_with_preloads)
+
+    if File.exists?(downloaded_thumbnail) do
+      destination = generate_filepath_for(media_item_with_preloads, "thumbnail.jpg")
+      FilesystemUtils.cp_p!(downloaded_thumbnail, destination)
+
+      {:ok, destination}
+    else
+      :no_local_copy
+    end
+  end
+
+  defp fetch_thumbnail_from_backend(media_item_with_preloads) do
     yt_dlp_filepath = generate_filepath_for(media_item_with_preloads, "thumbnail.%(ext)s")
     real_filepath = generate_filepath_for(media_item_with_preloads, "thumbnail.jpg")
     command_opts = [output: yt_dlp_filepath]

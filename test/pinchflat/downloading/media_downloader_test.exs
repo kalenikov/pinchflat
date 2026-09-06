@@ -195,15 +195,15 @@ defmodule Pinchflat.Downloading.MediaDownloaderTest do
       # fetch included, since that is where the rate-limit landed on 2026-09-05.
       expect(YtDlpRunnerMock, :run, 3, fn
         _url, :get_downloadable_status, _opts, _ot, addl ->
-          assert {:sleep_interval_override, 180} in addl
+          assert {:sleep_interval_override, 10} in addl
           {:ok, "{}"}
 
         _url, :download, _opts, _ot, addl ->
-          assert {:sleep_interval_override, 180} in addl
+          assert {:sleep_interval_override, 10} in addl
           {:ok, render_metadata(:media_metadata)}
 
         _url, :download_thumbnail, _opts, _ot, addl ->
-          assert {:sleep_interval_override, 180} in addl
+          assert {:sleep_interval_override, 10} in addl
           {:ok, ""}
       end)
 
@@ -213,14 +213,14 @@ defmodule Pinchflat.Downloading.MediaDownloaderTest do
       assert {:ok, _} = MediaDownloader.download_for_media_item(media_item)
     end
 
-    test "uses the grown pace once the source has been slowed down" do
+    test "the per-request pace stays small even after the source has been slowed down" do
       expect(YtDlpRunnerMock, :run, 3, fn
         _url, :get_downloadable_status, _opts, _ot, addl ->
-          assert {:sleep_interval_override, 720} in addl
+          assert {:sleep_interval_override, 10} in addl
           {:ok, "{}"}
 
         _url, :download, _opts, _ot, addl ->
-          assert {:sleep_interval_override, 720} in addl
+          assert {:sleep_interval_override, 10} in addl
           {:ok, render_metadata(:media_metadata)}
 
         _url, :download_thumbnail, _opts, _ot, _addl ->
@@ -249,6 +249,67 @@ defmodule Pinchflat.Downloading.MediaDownloaderTest do
 
       source = source_fixture(%{archival_mode: false})
       media_item = media_item_fixture(%{source_id: source.id})
+
+      assert {:ok, _} = MediaDownloader.download_for_media_item(media_item)
+    end
+  end
+
+  describe "download_for_media_item/3 when skipping the live check" do
+    test "an archival source's old video is not checked for live status" do
+      # The check exists to avoid grabbing an in-progress stream. A video uploaded long
+      # ago cannot be one, so on an archival crawl it is a round-trip for a known answer.
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :download, _opts, _ot, _addl -> {:ok, render_metadata(:media_metadata)}
+        _url, :download_thumbnail, _opts, _ot, _addl -> {:ok, ""}
+      end)
+
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id, uploaded_at: ~U[2022-01-01 00:00:00Z]})
+
+      assert {:ok, _} = MediaDownloader.download_for_media_item(media_item)
+    end
+
+    test "a recently uploaded video is still checked" do
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:ok, render_metadata(:media_metadata)}
+        _url, :download_thumbnail, _opts, _ot, _addl -> {:ok, ""}
+      end)
+
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id, uploaded_at: DateTime.utc_now()})
+
+      assert {:ok, _} = MediaDownloader.download_for_media_item(media_item)
+    end
+
+    test "a known livestream is still checked however old it is" do
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:ok, render_metadata(:media_metadata)}
+        _url, :download_thumbnail, _opts, _ot, _addl -> {:ok, ""}
+      end)
+
+      source = source_fixture(%{archival_mode: true})
+
+      media_item =
+        media_item_fixture(%{
+          source_id: source.id,
+          livestream: true,
+          uploaded_at: ~U[2022-01-01 00:00:00Z]
+        })
+
+      assert {:ok, _} = MediaDownloader.download_for_media_item(media_item)
+    end
+
+    test "ordinary sources keep the check" do
+      expect(YtDlpRunnerMock, :run, 3, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:ok, render_metadata(:media_metadata)}
+        _url, :download_thumbnail, _opts, _ot, _addl -> {:ok, ""}
+      end)
+
+      source = source_fixture(%{archival_mode: false})
+      media_item = media_item_fixture(%{source_id: source.id, uploaded_at: ~U[2022-01-01 00:00:00Z]})
 
       assert {:ok, _} = MediaDownloader.download_for_media_item(media_item)
     end

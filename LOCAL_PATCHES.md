@@ -58,6 +58,30 @@ patches deliberately.
   - Base pace is empirical: 2026-09-04 saw 17 back-to-back downloads at ~4.6 min spacing
     with no rate-limit, while ~40s spacing got the session banned on the fifth request the
     next day.
+- **Archival mode, part two — pacing and its own queue** (`config/runtime.exs`,
+  `media_download_worker.ex`, `media_fetching_resume_worker.ex`, `media_downloader.ex`,
+  `metadata_file_helpers.ex`, `download_option_builder.ex`, `sources.ex`):
+  - new Oban queue `media_fetching_archival`. On the shared queue one archival item held up
+    every ordinary channel for half an hour, and its 28-34 minutes in `executing` also
+    tripped the sync-service watchdog (30 min threshold) — four false "Queue stalled"
+    alerts in a day. Routing happens in `MediaDownloadWorker.kickoff_with_task/3`, the one
+    point every enqueue path goes through.
+  - the rate-limit pause and `MediaFetchingResumeWorker` now act on the queue that hit the
+    limit, not always `media_fetching`. Archival downloads run anonymously, ordinary ones
+    with the account's cookies, so a ban on one session says nothing about the other.
+  - **the pause moved to where it belongs: between videos, not between requests.** One video
+    costs up to three yt-dlp runs, and a per-request pause multiplied out to ~28 minutes per
+    video. Now per-request pacing is a flat 10s (`archival_request_sleep_seconds`) and the
+    worker holds `archival_sleep_seconds` after finishing a job — on a sequential queue that
+    is exactly the gap between downloads. Expect ~5-6 min/video.
+  - two of the three YouTube round-trips per video removed: the thumbnail is copied from
+    the file the download already wrote (`DownloadOptionBuilder.thumbnail_location_for/1`)
+    instead of being fetched again, and the live-status check is skipped for archival
+    sources' videos older than a day that aren't flagged as livestreams.
+  - toggling archival mode moves a source's queued jobs between queues (Oban's uniqueness
+    includes the queue, so they would otherwise duplicate or run at the old pace).
+  - **rollback if bans appear:** put the full pace back in `Sources.archival_pace_opts/1`
+    (one line). The removed round-trips can stay — they only lower the risk.
 - `lib/pinchflat_web/controllers/sources/source_html/media_item_table_live.ex`:
   — Delete+Ignore button (trash icon) on Downloaded and Pending tab rows,
     with no confirmation dialog on either tab (`data-confirm` intentionally absent)

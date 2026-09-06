@@ -27,6 +27,93 @@ defmodule Pinchflat.Downloading.MediaDownloadWorkerTest do
     {:ok, %{media_item: media_item}}
   end
 
+  describe "perform/1 when pacing an archival source" do
+    # The pause belongs BETWEEN videos, not between the individual requests that make up
+    # one video: the queue is sequential, so holding the worker at the end of a job is
+    # exactly the gap between one download and the next.
+    setup do
+      test_pid = self()
+      Application.put_env(:pinchflat, :archival_pacer, fn ms -> send(test_pid, {:paced, ms}) end)
+      on_exit(fn -> Application.delete_env(:pinchflat, :archival_pacer) end)
+    end
+
+    test "waits the archival pace after finishing a download" do
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+
+      assert :ok = perform_job(MediaDownloadWorker, %{id: media_item.id}, queue: :media_fetching_archival)
+
+      expected_ms = Sources.archival_base_sleep_seconds() * 1000
+      assert_received {:paced, ^expected_ms}
+    end
+
+    test "waits the grown pace once the source has been slowed down" do
+      source = source_fixture(%{archival_mode: true, archival_sleep_seconds: 720})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+
+      assert :ok = perform_job(MediaDownloadWorker, %{id: media_item.id}, queue: :media_fetching_archival)
+
+      assert_received {:paced, 720_000}
+    end
+
+    test "ordinary sources are not paced at all", %{media_item: media_item} do
+      assert :ok = perform_job(MediaDownloadWorker, %{id: media_item.id})
+
+      refute_received {:paced, _}
+    end
+
+    test "a rate-limited job is not paced on top of the queue pause" do
+      rate_limit_message =
+        "ERROR: [youtube] abc: This content isn't available, try again later. " <>
+          "The current session has been rate-limited by YouTube for up to an hour."
+
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:error, rate_limit_message, 1}
+      end)
+
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+
+      assert {:snooze, _} =
+               perform_job(MediaDownloadWorker, %{id: media_item.id}, queue: :media_fetching_archival)
+
+      refute_received {:paced, _}
+    end
+  end
+
+  describe "kickoff_with_task/2 when routing to a queue" do
+    test "archival sources go to their own queue so they don't block everything else" do
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+
+      assert {:ok, _} = MediaDownloadWorker.kickoff_with_task(media_item)
+
+      assert [job] = all_enqueued(worker: MediaDownloadWorker)
+      assert job.queue == "media_fetching_archival"
+    end
+
+    test "ordinary sources stay on the normal queue" do
+      source = source_fixture(%{archival_mode: false})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+
+      assert {:ok, _} = MediaDownloadWorker.kickoff_with_task(media_item)
+
+      assert [job] = all_enqueued(worker: MediaDownloadWorker)
+      assert job.queue == "media_fetching"
+    end
+
+    test "routing survives a media item handed over without its source preloaded" do
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+
+      assert {:ok, _} = MediaDownloadWorker.kickoff_with_task(Repo.reload!(media_item))
+
+      assert [job] = all_enqueued(worker: MediaDownloadWorker)
+      assert job.queue == "media_fetching_archival"
+    end
+  end
+
   describe "kickoff_with_task/2" do
     test "starts the worker", %{media_item: media_item} do
       assert [] = all_enqueued(worker: MediaDownloadWorker)
@@ -217,6 +304,44 @@ defmodule Pinchflat.Downloading.MediaDownloadWorkerTest do
       source = Sources.get_source!(media_item.source_id)
       refute source.archival_mode
       assert is_nil(source.archival_sleep_seconds)
+    end
+
+    test "a rate-limit in the archival queue pauses that queue, not the ordinary one" do
+      # Otherwise a slow archival crawl hitting a limit would stop every ordinary channel,
+      # and vice versa — the two run on separate YouTube sessions and must fail separately.
+      rate_limit_message =
+        "ERROR: [youtube] abc: This content isn't available, try again later. " <>
+          "The current session has been rate-limited by YouTube for up to an hour."
+
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:error, rate_limit_message, 1}
+      end)
+
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+
+      assert {:snooze, _} =
+               perform_job(MediaDownloadWorker, %{id: media_item.id}, queue: :media_fetching_archival)
+
+      assert [resume_job] = all_enqueued(worker: Pinchflat.Downloading.MediaFetchingResumeWorker)
+      assert resume_job.args["queue"] == "media_fetching_archival"
+    end
+
+    test "a rate-limit in the ordinary queue still resumes the ordinary queue", %{media_item: media_item} do
+      rate_limit_message =
+        "ERROR: [youtube] abc: This content isn't available, try again later. " <>
+          "The current session has been rate-limited by YouTube for up to an hour."
+
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:error, rate_limit_message, 1}
+      end)
+
+      assert {:snooze, _} = perform_job(MediaDownloadWorker, %{id: media_item.id}, queue: :media_fetching)
+
+      assert [resume_job] = all_enqueued(worker: Pinchflat.Downloading.MediaFetchingResumeWorker)
+      assert resume_job.args["queue"] == "media_fetching"
     end
 
     test "does not set the job to retryable if youtube thinks you're a bot", %{media_item: media_item} do

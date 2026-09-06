@@ -25,6 +25,12 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
   Returns {:ok, %Task{}} | {:error, :duplicate_job} | {:error, %Ecto.Changeset{}}
   """
   def kickoff_with_task(media_item, job_args \\ %{}, job_opts \\ []) do
+    # Routing lives here rather than in the callers so every path that queues a download —
+    # indexing, the pending-download button, a manual force, a quality upgrade — lands in
+    # the right lane without each having to know about archival mode.
+    source = Repo.preload(media_item, :source).source
+    job_opts = Keyword.put_new(job_opts, :queue, Sources.download_queue_for(source))
+
     %{id: media_item.id}
     |> Map.merge(job_args)
     |> MediaDownloadWorker.new(job_opts)
@@ -45,17 +51,22 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
   Returns :ok | {:error, any, ...any}
   """
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"id" => media_item_id} = args}) do
+  def perform(%Oban.Job{args: %{"id" => media_item_id} = args, queue: queue}) do
     should_force = Map.get(args, "force", false)
     is_quality_upgrade = Map.get(args, "quality_upgrade?", false)
 
     media_item = fetch_and_run_prevent_download_user_script(media_item_id)
 
-    if should_download_media?(media_item, should_force, is_quality_upgrade) do
-      download_media_and_schedule_jobs(media_item, is_quality_upgrade, should_force)
-    else
-      :ok
-    end
+    result =
+      if should_download_media?(media_item, should_force, is_quality_upgrade) do
+        download_media_and_schedule_jobs(media_item, is_quality_upgrade, should_force, queue)
+      else
+        :ok
+      end
+
+    pace_archival_source(media_item, result)
+
+    result
   rescue
     Ecto.NoResultsError -> Logger.info("#{__MODULE__} discarded: media item #{media_item_id} not found")
     Ecto.StaleEntryError -> Logger.info("#{__MODULE__} discarded: media item #{media_item_id} stale")
@@ -89,7 +100,7 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
     Repo.preload(media_item, :source)
   end
 
-  defp download_media_and_schedule_jobs(media_item, is_quality_upgrade, should_force) do
+  defp download_media_and_schedule_jobs(media_item, is_quality_upgrade, should_force, queue) do
     overwrite_behaviour = if should_force || is_quality_upgrade, do: :force_overwrites, else: :no_force_overwrites
     override_opts = [overwrite_behaviour: overwrite_behaviour]
 
@@ -113,7 +124,7 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
         {:ok, :non_retry}
 
       {:error, _error_atom, message} ->
-        action_on_error(message, media_item)
+        action_on_error(message, media_item, queue)
     end
   end
 
@@ -130,7 +141,7 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
   # Pause the media_fetching queue for this long when YouTube rate-limits the session.
   @rate_limit_pause_seconds 60 * 60
 
-  defp action_on_error(message, media_item) do
+  defp action_on_error(message, media_item, queue) do
     msg = to_string(message)
 
     # This will attempt re-download at the next indexing, but it won't be retried
@@ -150,7 +161,7 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
 
     cond do
       String.contains?(msg, rate_limit_errors) ->
-        pause_media_fetching_for_rate_limit(message)
+        pause_media_fetching_for_rate_limit(message, queue)
         slow_down_archival_source(media_item)
         # Snooze this item so it is retried once the queue resumes.
         {:snooze, @rate_limit_pause_seconds}
@@ -161,6 +172,28 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
 
       true ->
         {:error, :download_failed}
+    end
+  end
+
+  # The archival pace is the gap BETWEEN videos, and this queue runs one job at a time —
+  # so holding the worker here, after the work is done, is that gap. Waiting afterwards
+  # rather than beforehand keeps the spacing honest even when a download fails.
+  #
+  # Skipped for a rate-limited job: its queue is already paused for an hour, and snoozing
+  # is the fast path back into that pause.
+  defp pace_archival_source(_media_item, {:snooze, _}), do: :ok
+
+  defp pace_archival_source(media_item, _result) do
+    source = Repo.preload(media_item, :source).source
+
+    case Sources.archival_sleep_seconds(source) do
+      nil ->
+        :ok
+
+      seconds ->
+        Logger.info("Archival source ##{source.id}: waiting #{seconds}s before the next download")
+        pacer = Application.get_env(:pinchflat, :archival_pacer, &Process.sleep/1)
+        pacer.(seconds * 1000)
     end
   end
 
@@ -179,22 +212,33 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
     end
   end
 
-  # The whole session is rate-limited, so pausing just this job is pointless — every
-  # other queued download would hit the same wall. Pause the entire media_fetching
-  # queue and schedule a resume once the (roughly one hour) limit has passed.
-  defp pause_media_fetching_for_rate_limit(message) do
+  # The session behind this queue is rate-limited, so pausing just this job is pointless —
+  # every other download queued on it would hit the same wall. Pause that queue and
+  # schedule a resume once the (roughly one hour) limit has passed.
+  #
+  # Only the queue that hit the limit is paused: archival downloads run anonymously while
+  # ordinary ones use the account's cookies, so a ban on one session says nothing about
+  # the other.
+  defp pause_media_fetching_for_rate_limit(message, queue) do
+    queue_atom = queue_to_atom(queue)
+
     Logger.warning(
-      "YouTube session rate-limited; pausing media_fetching for #{@rate_limit_pause_seconds}s. Message: #{inspect(message)}"
+      "YouTube session rate-limited; pausing #{queue} for #{@rate_limit_pause_seconds}s. Message: #{inspect(message)}"
     )
 
     try do
-      Oban.pause_queue(queue: :media_fetching, local_only: true)
+      Oban.pause_queue(queue: queue_atom, local_only: true)
     rescue
-      e -> Logger.error("Could not pause media_fetching queue: #{inspect(e)}")
+      e -> Logger.error("Could not pause #{queue} queue: #{inspect(e)}")
     end
 
-    Pinchflat.Downloading.MediaFetchingResumeWorker.schedule_resume(@rate_limit_pause_seconds)
+    Pinchflat.Downloading.MediaFetchingResumeWorker.schedule_resume(@rate_limit_pause_seconds, queue_atom)
   end
+
+  # Oban hands the queue back as a string; every queue we could be running on is declared
+  # in config, so the atom is guaranteed to exist already.
+  defp queue_to_atom(queue) when is_atom(queue), do: queue
+  defp queue_to_atom(queue) when is_binary(queue), do: String.to_existing_atom(queue)
 
   # NOTE: I like this pattern of using the default value so that I don't have to
   # define it in config.exs (and friends). Consider using this elsewhere.

@@ -52,6 +52,7 @@ defmodule Pinchflat.Sources do
 
   @archival_base_sleep_seconds 180
   @archival_max_sleep_seconds 3600
+  @archival_request_sleep_seconds 10
 
   @doc """
   The pace archival mode starts at, in seconds between yt-dlp requests.
@@ -84,17 +85,37 @@ defmodule Pinchflat.Sources do
   def archival_sleep_seconds(%Source{}), do: nil
 
   @doc """
-  The yt-dlp runner options carrying a source's archival pace — empty for sources that
+  The Oban queue a source's downloads belong on. Archival sources get their own so their
+  minutes-per-request pacing can't hold up ordinary channels.
+
+  Returns atom()
+  """
+  def download_queue_for(%Source{archival_mode: true}), do: :media_fetching_archival
+  def download_queue_for(%Source{}), do: :media_fetching
+
+  @doc """
+  The pause yt-dlp takes between the individual requests that make up ONE video.
+
+  Deliberately small. A single video costs several requests (availability check, the
+  download itself, the thumbnail), and stretching each of them out is what turned a
+  download into a 28-minute affair. The pace that matters — the gap between one video and
+  the next — is held by the worker instead, see `archival_sleep_seconds/1`.
+
+  Returns integer()
+  """
+  def archival_request_sleep_seconds, do: @archival_request_sleep_seconds
+
+  @doc """
+  The yt-dlp runner options carrying a source's per-request pace — empty for sources that
   should just use the global setting, so callers can append it unconditionally.
 
   Returns keyword()
   """
-  def archival_pace_opts(%Source{} = source) do
-    case archival_sleep_seconds(source) do
-      nil -> []
-      seconds -> [sleep_interval_override: seconds]
-    end
+  def archival_pace_opts(%Source{archival_mode: true}) do
+    [sleep_interval_override: @archival_request_sleep_seconds]
   end
+
+  def archival_pace_opts(%Source{}), do: []
 
   @doc """
   Slows a source's archival pace down after YouTube pushed back, doubling it up to the
@@ -376,6 +397,13 @@ defmodule Pinchflat.Sources do
     # current changes or if that's how it already was in the database.
     # Rephrased, we're essentially using it in place of `get_field/2`
     case {current_changes, applied_changes} do
+      # Archival mode decides which queue a source's downloads sit on, and Oban's
+      # uniqueness includes the queue — so jobs already queued have to be moved rather
+      # than left behind to run at the old pace (or duplicated into both queues).
+      {%{archival_mode: _}, %{enabled: true, download_media: true}} ->
+        DownloadingHelpers.dequeue_pending_download_tasks(source)
+        DownloadingHelpers.enqueue_pending_download_tasks(source)
+
       {%{download_media: true}, %{enabled: true}} ->
         DownloadingHelpers.enqueue_pending_download_tasks(source)
 

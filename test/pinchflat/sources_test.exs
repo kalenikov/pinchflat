@@ -6,13 +6,14 @@ defmodule Pinchflat.SourcesTest do
   import Pinchflat.ProfilesFixtures
   import Pinchflat.SourcesFixtures
 
+  alias Pinchflat.Downloading.MediaDownloadWorker
   alias Pinchflat.Sources
   alias Pinchflat.Sources.Source
   alias Pinchflat.Utils.FilesystemUtils
   alias Pinchflat.Metadata.MetadataFileHelpers
   alias Pinchflat.Downloading.DownloadingHelpers
   alias Pinchflat.FastIndexing.FastIndexingWorker
-  alias Pinchflat.Downloading.MediaDownloadWorker
+  alias MediaDownloadWorker
   alias Pinchflat.Metadata.SourceMetadataStorageWorker
   alias Pinchflat.SlowIndexing.MediaCollectionIndexingWorker
 
@@ -182,6 +183,36 @@ defmodule Pinchflat.SourcesTest do
 
       assert {:ok, updated} = Sources.update_source(source, %{archival_mode: false})
       assert is_nil(updated.archival_sleep_seconds)
+    end
+  end
+
+  describe "update_source/2 when archival mode is toggled" do
+    # Oban's uniqueness includes the queue, so a source whose jobs are already queued would
+    # end up with the same media item sitting in both queues. Move them instead.
+    test "pending jobs move to the archival queue when the mode is turned on" do
+      source = source_fixture(%{archival_mode: false})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+      {:ok, _} = MediaDownloadWorker.kickoff_with_task(media_item)
+
+      assert [%{queue: "media_fetching"}] = all_enqueued(worker: MediaDownloadWorker)
+
+      {:ok, _} = Sources.update_source(source, %{archival_mode: true})
+
+      assert [%{queue: "media_fetching_archival"}] =
+               all_enqueued(worker: MediaDownloadWorker)
+    end
+
+    test "pending jobs move back to the ordinary queue when the mode is turned off" do
+      source = source_fixture(%{archival_mode: true})
+      media_item = media_item_fixture(%{source_id: source.id, media_filepath: nil})
+      {:ok, _} = MediaDownloadWorker.kickoff_with_task(media_item)
+
+      assert [%{queue: "media_fetching_archival"}] =
+               all_enqueued(worker: MediaDownloadWorker)
+
+      {:ok, _} = Sources.update_source(source, %{archival_mode: false})
+
+      assert [%{queue: "media_fetching"}] = all_enqueued(worker: MediaDownloadWorker)
     end
   end
 

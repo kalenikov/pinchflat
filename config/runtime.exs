@@ -55,6 +55,11 @@ config :pinchflat, Oban,
     fast_indexing: yt_dlp_worker_count,
     media_collection_indexing: yt_dlp_worker_count,
     media_fetching: yt_dlp_worker_count,
+    # Archival sources crawl a whole back catalogue at minutes-per-request pacing. On the
+    # shared queue a single archival item blocked every ordinary channel for half an hour,
+    # so they get their own lane. They run anonymously while ordinary downloads use the
+    # account's cookies, so the two lanes are separate YouTube sessions.
+    media_fetching_archival: yt_dlp_worker_count,
     remote_metadata: yt_dlp_worker_count,
     local_data: 8
   ],

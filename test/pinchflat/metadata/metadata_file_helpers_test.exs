@@ -4,7 +4,9 @@ defmodule Pinchflat.Metadata.MetadataFileHelpersTest do
   import Pinchflat.MediaFixtures
   import Pinchflat.SourcesFixtures
 
+  alias Pinchflat.Downloading.DownloadOptionBuilder
   alias Pinchflat.Metadata.MetadataFileHelpers, as: Helpers
+  alias Pinchflat.Utils.FilesystemUtils
 
   setup do
     media_item = Repo.preload(media_item_fixture(), :source)
@@ -94,6 +96,31 @@ defmodule Pinchflat.Metadata.MetadataFileHelpersTest do
       filepath = Helpers.download_and_store_thumbnail_for(media_item)
 
       assert filepath == nil
+    end
+  end
+
+  describe "download_and_store_thumbnail_for/2 when the download already fetched a thumbnail" do
+    test "copies it from disk instead of asking YouTube for it again", %{media_item: media_item} do
+      # The media profile writes a thumbnail next to the media file, so going back to
+      # YouTube for the very same image is a third round-trip for nothing.
+      expect(YtDlpRunnerMock, :run, 0, fn _url, :download_thumbnail, _opts, _ot, _addl -> {:ok, ""} end)
+
+      existing = DownloadOptionBuilder.thumbnail_location_for(media_item)
+      FilesystemUtils.write_p!(existing, "thumbnail-bytes")
+      # The DB rolls back between tests but the filesystem does not, and media item IDs
+      # repeat — a leftover file here would silently satisfy every later thumbnail test.
+      on_exit(fn -> File.rm(existing) end)
+
+      filepath = Helpers.download_and_store_thumbnail_for(media_item)
+
+      assert filepath =~ ~r{/media_items/#{media_item.id}/thumbnail.jpg}
+      assert File.read!(filepath) == "thumbnail-bytes"
+    end
+
+    test "falls back to yt-dlp when no thumbnail was written", %{media_item: media_item} do
+      expect(YtDlpRunnerMock, :run, 1, fn _url, :download_thumbnail, _opts, _ot, _addl -> {:ok, ""} end)
+
+      assert Helpers.download_and_store_thumbnail_for(media_item)
     end
   end
 
