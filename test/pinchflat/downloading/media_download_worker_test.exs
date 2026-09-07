@@ -344,6 +344,58 @@ defmodule Pinchflat.Downloading.MediaDownloadWorkerTest do
       assert resume_job.args["queue"] == "media_fetching"
     end
 
+    test "does not retry a members-only video reported in Russian", %{media_item: media_item} do
+      # base-config.txt pins youtube:lang=ru, so YouTube's own wording comes back localised
+      # and never matches the English phrase. Left unrecognised it looks retryable, and the
+      # job burns through all 20 attempts sending an alert on each one.
+      russian_members_only =
+        "ERROR: [youtube] abc: Станьте спонсором, чтобы посмотреть это видео, " <>
+          "а также получить доступ к бонусам и эксклюзивному контенту данного канала."
+
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:error, russian_members_only, 1}
+      end)
+
+      Oban.Testing.with_testing_mode(:inline, fn ->
+        {:ok, job} = Oban.insert(MediaDownloadWorker.new(%{id: media_item.id}))
+
+        assert job.state == "completed"
+      end)
+    end
+
+    test "does not retry an unavailable video reported in Russian", %{media_item: media_item} do
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:error, "ERROR: [youtube] abc: Видео недоступно", 1}
+      end)
+
+      Oban.Testing.with_testing_mode(:inline, fn ->
+        {:ok, job} = Oban.insert(MediaDownloadWorker.new(%{id: media_item.id}))
+
+        assert job.state == "completed"
+      end)
+    end
+
+    test "still treats a Russian rate-limit as a rate-limit", %{media_item: media_item} do
+      # The wording that matters here is yt-dlp's own hint, which stays English, but the
+      # localised half must not tip it into the permanent-failure branch either.
+      russian_rate_limit =
+        "ERROR: [youtube] abc: Видео недоступно. Повторите попытку позже. " <>
+          "The current session has been rate-limited by YouTube for up to an hour."
+
+      expect(YtDlpRunnerMock, :run, 2, fn
+        _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}
+        _url, :download, _opts, _ot, _addl -> {:error, russian_rate_limit, 1}
+      end)
+
+      Oban.Testing.with_testing_mode(:inline, fn ->
+        {:ok, job} = Oban.insert(MediaDownloadWorker.new(%{id: media_item.id}))
+
+        assert job.state == "scheduled"
+      end)
+    end
+
     test "does not set the job to retryable if youtube thinks you're a bot", %{media_item: media_item} do
       expect(YtDlpRunnerMock, :run, 2, fn
         _url, :get_downloadable_status, _opts, _ot, _addl -> {:ok, "{}"}

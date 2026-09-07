@@ -146,17 +146,25 @@ defmodule Pinchflat.Downloading.MediaDownloadWorker do
 
     # This will attempt re-download at the next indexing, but it won't be retried
     # immediately as part of job failure logic
+    # YouTube's own wording is localised (base-config.txt pins youtube:lang=ru), while
+    # yt-dlp's added hints stay English. An unrecognised permanent failure looks retryable,
+    # so the job burns through all 20 attempts and alerts on every one of them — which is
+    # exactly what a members-only video did on 2026-09-07.
     non_retryable_errors = [
       "Video unavailable",
+      "Видео недоступно",
       "Sign in to confirm",
-      "This video is available to this channel's members"
+      "Войдите, чтобы подтвердить",
+      "This video is available to this channel's members",
+      "спонсор"
     ]
 
     # YouTube rate-limit errors also contain "Video unavailable", so this must be
     # checked FIRST — otherwise they'd be misclassified as permanent per-video failures.
     rate_limit_errors = [
       "rate-limited",
-      "try again later"
+      "try again later",
+      "Повторите попытку позже"
     ]
 
     cond do

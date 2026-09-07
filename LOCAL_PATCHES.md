@@ -58,6 +58,12 @@ patches deliberately.
   - Base pace is empirical: 2026-09-04 saw 17 back-to-back downloads at ~4.6 min spacing
     with no rate-limit, while ~40s spacing got the session banned on the fifth request the
     next day.
+- `lib/pinchflat/downloading/media_download_worker.ex`: the permanent-failure list also
+  matches YouTube's **Russian** wording. `base-config.txt` pins `youtube:lang=ru,ru-RU`, so
+  YouTube's own text is localised while yt-dlp's added hints stay English. An unrecognised
+  permanent failure looks retryable, and Oban then burns all 20 attempts with an alert on
+  each — a members-only video ("Станьте спонсором…") did exactly that on 2026-09-07.
+  The rate-limit branch was already safe: its "rate-limited" hint comes from yt-dlp itself.
 - **Archival mode, part two — pacing and its own queue** (`config/runtime.exs`,
   `media_download_worker.ex`, `media_fetching_resume_worker.ex`, `media_downloader.ex`,
   `metadata_file_helpers.ex`, `download_option_builder.ex`, `sources.ex`):
